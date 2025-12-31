@@ -1,5 +1,5 @@
 {
-  "name": "hype",
+  "name": "n3rdfeed",
   "description": "ML/AI news aggregator from GitHub, HuggingFace, Reddit, and Replicate",
   "private": true,
   "type": "module",
