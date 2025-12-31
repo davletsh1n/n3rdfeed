@@ -1,21 +1,36 @@
-# Leetfeed / Hype-based
+# N3RDFEED
 
-Hello world
+ML/AI news aggregator from GitHub, HuggingFace, Reddit, and Replicate.
 
 ## Local Dev
 
+1. Install dependencies:
+
 ```bash
 npm install
-cp .dev.vars.example .dev.vars  # fill in values
+```
+
+2. Setup environment variables:
+
+```bash
+cp .env.example .env  # fill in values
+```
+
+3. Start the server:
+
+```bash
 npm run dev
+```
+
+4. Update content (can be run independently):
+
+```bash
+npm run updateContent
 ```
 
 ## Deploy
 
 ```bash
-wrangler secret put SUPABASE_URL
-wrangler secret put SUPABASE_ANON_KEY
-wrangler secret put REPLICATE_API_TOKEN
 npm run deploy
 ```
 
