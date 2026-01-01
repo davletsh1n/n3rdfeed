@@ -17,10 +17,8 @@ import type { Post } from './types';
 import { MODEL_RATES, getOpenRouterBalance } from './services/llm.js';
 import { executionLogs, clearExecutionLogs } from './utils.js';
 
-// Загружаем переменные окружения (только для локальной разработки)
-if (process.env.NODE_ENV !== 'production') {
-  config();
-}
+// Загружаем переменные окружения
+config();
 
 // Импорт шаблонов как строк через Vite (?raw)
 // Это позволяет держать HTML отдельно, но в бандле они будут константами
