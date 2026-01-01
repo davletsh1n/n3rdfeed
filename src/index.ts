@@ -1,7 +1,7 @@
 /**
  * @file index.ts
  * @description Главная точка входа приложения. Управляет маршрутизацией (Hono), рендерингом страниц (Mustache) и API-эндпоинтами.
- * Оптимизировано для Vercel Edge Runtime через Vite Build-time Inlining.
+ * Оптимизировано для Vercel Serverless Runtime через Vite Build-time Inlining.
  */
 
 import { ApiException, fromHono } from 'chanfana';
@@ -9,12 +9,18 @@ import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import Mustache from 'mustache';
+import { config } from 'dotenv';
 import { ListPosts, GetLastUpdated } from './endpoints/posts.js';
 import { updateContent } from './scheduled.js';
 import { posts, FilterType } from './db.js';
 import type { Post } from './types';
 import { MODEL_RATES, getOpenRouterBalance } from './services/llm.js';
 import { executionLogs, clearExecutionLogs } from './utils.js';
+
+// Загружаем переменные окружения (только для локальной разработки)
+if (process.env.NODE_ENV !== 'production') {
+  config();
+}
 
 // Импорт шаблонов как строк через Vite (?raw)
 // Это позволяет держать HTML отдельно, но в бандле они будут константами
