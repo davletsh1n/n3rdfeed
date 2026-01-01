@@ -6,7 +6,7 @@ import {
   fetchReplicatePosts,
 } from './fetchers.js';
 import type { Post } from './types';
-import { translateBatch } from './services/llm.js';
+import { translateBatch, generateTLDRBatch } from './services/llm.js';
 import { addExecutionLog } from './utils.js';
 import { LIMITS, LLM_PROMPTS } from './config.js';
 
@@ -54,52 +54,72 @@ export async function updateContent(): Promise<void> {
   addExecutionLog(`New unique posts identified: ${newPosts.length}`);
 
   if (newPosts.length > 0) {
-    // 2. Группируем только НОВЫЕ посты для пакетного перевода (исключаем HuggingFace)
-    const repoBatch = newPosts
-      .filter((p) => (p.source === 'github' || p.source === 'replicate') && p.description)
-      .map((p) => ({ id: p.id, text: p.description }));
+    // 2. Генерируем TLDR для ВСЕХ новых постов (батчами по 30 для надежности)
+    const TLDR_BATCH_SIZE = 30;
+    let totalGenerated = 0;
+    let totalCost = 0;
 
-    const redditBatch = newPosts
-      .filter((p) => p.source === 'reddit')
-      .map((p) => ({ id: p.id, text: p.name }));
+    for (let i = 0; i < newPosts.length; i += TLDR_BATCH_SIZE) {
+      const batch = newPosts.slice(i, i + TLDR_BATCH_SIZE);
+      const batchNum = Math.floor(i / TLDR_BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(newPosts.length / TLDR_BATCH_SIZE);
 
-    if (repoBatch.length > 0 || redditBatch.length > 0) {
+      const tldrBatch = batch.map((p) => ({
+        id: p.id,
+        title: p.name,
+        description: p.description || '',
+        source: p.source,
+      }));
+
       addExecutionLog(
-        `Starting batch translation for ${repoBatch.length + redditBatch.length} items...`,
+        `Starting TLDR batch ${batchNum}/${totalBatches} (${tldrBatch.length} items)...`,
       );
 
-      const [repoTranslations, redditTranslations] = await Promise.all([
-        translateBatch(repoBatch, LLM_PROMPTS.REPO_DESCRIPTION, activeModel),
-        translateBatch(redditBatch, LLM_PROMPTS.REDDIT_TITLE, activeModel),
-      ]);
+      try {
+        const tldrResults = await generateTLDRBatch(tldrBatch, activeModel);
 
-      // 3. Сопоставляем результаты перевода только для новых постов
-      newPosts.forEach((post) => {
-        const translatedDesc = repoTranslations.translations[post.id];
-        const translatedName = redditTranslations.translations[post.id];
+        // 3. Применяем TLDR к постам
+        batch.forEach((post) => {
+          const tldr = tldrResults.tldrs[post.id];
+          if (tldr) {
+            post.tldr_ru = tldr;
+            totalGenerated++;
+          } else {
+            console.warn(`[TLDR] No TLDR for post ${post.id} (${post.name})`);
+          }
+        });
 
-        if (translatedDesc) post.description_ru = translatedDesc;
-        if (translatedName) post.name_ru = translatedName;
-      });
+        // 4. Логируем расходы
+        const totalTokens = tldrResults.usage.prompt_tokens + tldrResults.usage.completion_tokens;
+        totalCost += tldrResults.usage.total_cost;
 
-      // 4. Логируем расходы
-      const logUsage = async (batchResult: any, count: number) => {
-        if (count > 0) {
-          const totalTokens = batchResult.usage.prompt_tokens + batchResult.usage.completion_tokens;
-          addExecutionLog(
-            `LLM Response: ${totalTokens} tokens used. Cost: $${batchResult.usage.total_cost.toFixed(
-              5,
-            )}`,
-          );
-          await posts.logLLMUsage({ ...batchResult.usage, post_id: `BATCH_${Date.now()}` });
+        addExecutionLog(
+          `Batch ${batchNum}/${totalBatches}: ${Object.keys(tldrResults.tldrs).length}/${
+            tldrBatch.length
+          } TLDRs, ${totalTokens} tokens, $${tldrResults.usage.total_cost.toFixed(5)}`,
+        );
+
+        await posts.logLLMUsage({
+          ...tldrResults.usage,
+          post_id: `TLDR_BATCH_${batchNum}_${Date.now()}`,
+          items_count: tldrBatch.length,
+        });
+
+        // Пауза между батчами
+        if (i + TLDR_BATCH_SIZE < newPosts.length) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
-      };
-
-      await Promise.all([
-        logUsage(repoTranslations, repoBatch.length),
-        logUsage(redditTranslations, redditBatch.length),
-      ]);
+      } catch (err) {
+        addExecutionLog(`Error in batch ${batchNum}: ${err}`);
+        console.error('[TLDR] Batch error:', err);
+      }
     }
+
+    addExecutionLog(
+      `TLDR complete: ${totalGenerated}/${newPosts.length} generated, cost: $${totalCost.toFixed(
+        5,
+      )}`,
+    );
 
     // 5. Сохраняем только НОВЫЕ посты в базу данных
     try {

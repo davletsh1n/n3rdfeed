@@ -72,7 +72,13 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
                   <a href="{{url}}" target="_blank" rel="noopener noreferrer" class="font-bold hover:underline block">{{displayName}}</a>
                   <span class="text-[10px] px-1 border border-gray-300 text-gray-500">{{icon}}</span>
                 </div>
-                <p class="text-sm text-gray-600 leading-tight">{{description}}</p>
+                <p class="text-sm text-gray-500 leading-tight mt-1">{{originalDescription}}</p>
+                {{#hasTLDR}}
+                <div class="flex items-start gap-2 mt-2 pt-2 border-t border-gray-200">
+                  <span class="text-[12px] shrink-0 mt-0.5">📝</span>
+                  <p class="text-sm text-gray-800 leading-tight font-medium">{{tldr}}</p>
+                </div>
+                {{/hasTLDR}}
               </div>
               <div class="text-right flex flex-col items-end gap-1 shrink-0">
                 <span class="text-sm font-bold">{{stars}}</span>

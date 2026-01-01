@@ -47,10 +47,16 @@ npm run updateContent
 ## Project Structure
 
 - `src/index.ts`: Main entry point and Hono routes.
+- `src/config.ts`: Centralized configuration (sources, limits, prompts, API keys).
+- `src/templates.ts`: HTML templates (Page and Admin).
 - `src/fetchers.ts`: Logic for fetching data from external APIs.
 - `src/db.ts`: Supabase client and database operations.
+- `src/services/llm.ts`: OpenRouter API integration for TLDR generation.
+- `src/validators.ts`: Centralized validation functions.
 - `src/utils.ts`: Helper functions (sanitization, time formatting).
-- `src/templates/`: HTML templates for the frontend.
+- `src/types/`: TypeScript type definitions.
+- `src/endpoints/`: OpenAPI endpoints.
+- `scripts/`: Utility scripts (updateContent, generateTLDR).
 
 ## Deploy
 
@@ -76,15 +82,21 @@ CREATE TABLE repositories (
     source TEXT NOT NULL,
     username TEXT,
     name TEXT NOT NULL,
-    name_ru TEXT,
+    name_ru TEXT,              -- DEPRECATED: старые переводы заголовков
     description TEXT,
-    description_ru TEXT,
+    description_ru TEXT,       -- DEPRECATED: старые переводы описаний
+    tldr_ru TEXT,              -- AI-generated TLDR на русском (2-3 предложения)
     stars INTEGER DEFAULT 0,
     url TEXT,
     created_at TIMESTAMP WITH TIME ZONE,
     inserted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     PRIMARY KEY (id, source)
 );
+
+-- Индексы для оптимизации запросов
+CREATE INDEX idx_repositories_source_created ON repositories(source, created_at DESC);
+CREATE INDEX idx_repositories_stars ON repositories(stars DESC);
+CREATE INDEX idx_repositories_inserted ON repositories(inserted_at DESC);
 
 -- 3. Создание таблицы логов LLM
 CREATE TABLE llm_usage (
@@ -151,3 +163,32 @@ CREATE POLICY "service_role_all_usage" ON llm_usage FOR ALL TO service_role USIN
 CREATE POLICY "public_select_repos" ON repositories FOR SELECT TO anon, authenticated USING (true);
 CREATE POLICY "service_role_all_repos" ON repositories FOR ALL TO service_role USING (true);
 ```
+
+## New Features
+
+### TLDR Generation System
+
+Вместо прямых машинных переводов, система генерирует краткие фактологичные описания (TLDR) на русском языке:
+
+- **Оригинал**: Показывается полное английское описание
+- **TLDR**: Краткое (1-2 предложения) описание на русском с сохранением технических терминов
+- **Стиль**: Сухо, фактологично, без рекламы и домыслов
+- **Генерация**: Автоматически при обновлении контента
+
+**Команды**:
+```bash
+# Обновление контента (автоматически генерирует TLDR для новых постов)
+npm run updateContent
+
+# Генерация TLDR для существующих постов
+npm run generateTLDR
+```
+
+### Development Environment
+
+Проект поддерживает отдельные БД для разработки и production:
+
+- **Локально** (`npm run dev`): Использует dev БД (`SUPABASE_URL_DEV`)
+- **На Vercel**: Использует prod БД (`SUPABASE_URL`)
+
+См. [`DEV-ENVIRONMENT-SETUP.md`](DEV-ENVIRONMENT-SETUP.md) для настройки.

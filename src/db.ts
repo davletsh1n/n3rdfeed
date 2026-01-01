@@ -78,6 +78,7 @@ export const posts = {
       name_ru: post.name_ru || null,
       description: post.description,
       description_ru: post.description_ru || null,
+      tldr_ru: post.tldr_ru || null,
       stars: post.stars,
       url: post.url,
       created_at: post.created_at,
@@ -109,6 +110,7 @@ export const posts = {
       completion_tokens: usage.completion_tokens,
       total_cost: usage.total_cost,
       post_id: usage.post_id,
+      items_count: usage.items_count || 0,
     });
     if (error) console.error(`Error logging LLM usage: ${error.message}`);
   },
@@ -196,6 +198,23 @@ export const posts = {
     const client = getClient();
     const { data, error } = await client.from('repositories').select('*').in('id', ids);
     if (error) throw new Error(`Database error querying by IDs: ${error.message}`);
+    return data || [];
+  },
+
+  /**
+   * Получение всех постов без TLDR (для backfill скрипта)
+   */
+  async getPostsWithoutTLDR(limit: number = 1000): Promise<Post[]> {
+    const client = getClient();
+    const { data, error } = await client
+      .from('repositories')
+      .select('*')
+      .is('tldr_ru', null)
+      .order('inserted_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw new Error(`Database error querying posts without TLDR: ${error.message}`);
+    console.log(`[DB] Found ${data?.length || 0} posts without TLDR`);
     return data || [];
   },
 };

@@ -23,17 +23,27 @@ const ALL_SOURCES = [...SOURCES];
 function preparePostData(post: Post, index: number) {
   const isRepo =
     post.source === 'huggingface' || post.source === 'github' || post.source === 'replicate';
-  const displayName = isRepo ? `${post.username}/${post.name}` : post.name_ru || post.name;
+
+  // Всегда показываем оригинальное название (без перевода)
+  const displayName = isRepo ? `${post.username}/${post.name}` : post.name;
   const icon = SOURCE_ICONS[post.source] || SOURCE_ICONS.github;
-  const description = isRepo
-    ? post.description_ru || post.description
+
+  // Оригинальное описание (всегда показываем)
+  const originalDescription = isRepo
+    ? post.description || ''
     : `${post.username} on ${post.description}`;
+
+  // TLDR (если есть)
+  const tldr = post.tldr_ru || '';
+  const hasTLDR = !!post.tldr_ru;
 
   return {
     index: index + 1,
     displayName,
     icon,
-    description: description || '',
+    originalDescription,
+    tldr,
+    hasTLDR,
     url: post.url,
     stars: post.stars,
   };

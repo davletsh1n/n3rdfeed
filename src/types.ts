@@ -12,10 +12,11 @@ export interface Post {
   source: string;
   username: string;
   name: string;
-  name_ru?: string; // Переведенное название (для Reddit)
+  name_ru?: string; // Переведенное название (для Reddit) - DEPRECATED
   stars: number;
   description: string;
-  description_ru?: string; // Переведенное описание (для GitHub/Replicate)
+  description_ru?: string; // Переведенное описание (для GitHub/Replicate) - DEPRECATED
+  tldr_ru?: string; // AI-generated TLDR на русском (2-3 предложения)
   url: string;
   created_at: string;
 }
@@ -29,4 +30,5 @@ export interface LLMUsage {
   completion_tokens: number;
   total_cost: number;
   post_id?: string;
+  items_count?: number; // Количество обработанных элементов в батче
 }

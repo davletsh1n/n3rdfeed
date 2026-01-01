@@ -4,7 +4,7 @@
  */
 
 import { LLMUsage } from '../types.js';
-import { API_KEYS } from '../config.js';
+import { API_KEYS, LLM_PROMPTS } from '../config.js';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -145,4 +145,97 @@ function calculateCost(model: string, promptTokens: number, completionTokens: nu
   const completionCost = (completionTokens / 1_000_000) * rate.completion;
 
   return promptCost + completionCost;
+}
+
+/**
+ * Генерация TLDR (кратких описаний) для постов.
+ * Заменяет прямые переводы более естественным и кратким описанием на русском.
+ *
+ * @param items - Массив постов с заголовком, описанием и источником
+ * @param model - Модель LLM для генерации
+ * @returns Объект с TLDR и данными об использовании
+ */
+export async function generateTLDRBatch(
+  items: { id: string; title: string; description: string; source: string }[],
+  model: string = 'openai/gpt-4o-mini',
+): Promise<{ tldrs: Record<string, string>; usage: LLMUsage }> {
+  if (items.length === 0) {
+    return {
+      tldrs: {},
+      usage: { model_id: model, prompt_tokens: 0, completion_tokens: 0, total_cost: 0 },
+    };
+  }
+
+  if (!API_KEYS.OPENROUTER) {
+    throw new Error('OPENROUTER_API_KEY is not defined');
+  }
+
+  const systemPrompt = `${LLM_PROMPTS.TLDR_GENERATOR}
+
+ОТВЕТЬ СТРОГО В ФОРМАТЕ JSON: {"results": [{"id": "...", "tldr": "..."}]}.
+Сохраняй оригинальные ID.`;
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${API_KEYS.OPENROUTER}`,
+      'HTTP-Referer': 'https://github.com/n3rdfeed',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: JSON.stringify({ items }) },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.1, // Минимальная температура - только факты, без креатива
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`OpenRouter API error: ${JSON.stringify(error)}`);
+  }
+
+  const data = await response.json();
+
+  console.log(`[LLM] TLDR generation response received. Tokens: ${data.usage?.total_tokens || 0}`);
+
+  let content;
+  try {
+    content = JSON.parse(data.choices[0].message.content);
+  } catch (e) {
+    console.error(`[LLM] Failed to parse JSON response: ${data.choices[0].message.content}`);
+    throw new Error('Invalid JSON response from LLM');
+  }
+
+  const tldrs: Record<string, string> = {};
+  if (content.results && Array.isArray(content.results)) {
+    content.results.forEach((res: any) => {
+      if (res.tldr && res.tldr.trim()) {
+        tldrs[res.id] = res.tldr.trim();
+      }
+    });
+  }
+
+  console.log(`[LLM] Generated ${Object.keys(tldrs).length} TLDRs out of ${items.length} items`);
+
+  // Логируем какие посты не получили TLDR
+  const missingTLDRs = items.filter((item) => !tldrs[item.id]);
+  if (missingTLDRs.length > 0) {
+    console.warn(
+      `[LLM] Missing TLDRs for ${missingTLDRs.length} items:`,
+      missingTLDRs.map((i) => i.id),
+    );
+  }
+
+  const usage: LLMUsage = {
+    model_id: model,
+    prompt_tokens: data.usage.prompt_tokens,
+    completion_tokens: data.usage.completion_tokens,
+    total_cost: calculateCost(model, data.usage.prompt_tokens, data.usage.completion_tokens),
+  };
+
+  return { tldrs, usage };
 }

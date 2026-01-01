@@ -75,11 +75,22 @@ export const AUTH = {
 
 /**
  * Настройки Supabase
+ * Автоматически переключается между prod и dev в зависимости от NODE_ENV
  */
+const isDev = process.env.NODE_ENV !== 'production';
+
 export const SUPABASE = {
-  URL: process.env.SUPABASE_URL || '',
-  ANON_KEY: process.env.SUPABASE_ANON_KEY || '',
-  SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  URL: isDev
+    ? process.env.SUPABASE_URL_DEV || process.env.SUPABASE_URL || ''
+    : process.env.SUPABASE_URL || '',
+
+  ANON_KEY: isDev
+    ? process.env.SUPABASE_ANON_KEY_DEV || process.env.SUPABASE_ANON_KEY || ''
+    : process.env.SUPABASE_ANON_KEY || '',
+
+  SERVICE_ROLE_KEY: isDev
+    ? process.env.SUPABASE_SERVICE_ROLE_KEY_DEV || process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+    : process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 } as const;
 
 /**
@@ -123,22 +134,49 @@ export const REDDIT_FLAIR_FILTERS: Record<string, string[]> = {
 } as const;
 
 /**
- * Промпты для LLM переводов
+ * Промпты для LLM
  */
 export const LLM_PROMPTS = {
-  REPO_DESCRIPTION: `ТЫ - ОПЫТНЫЙ ML-ИНЖЕНЕР И ГИК. Переведи описание IT-проекта на русский язык в профессиональной, технической манере. 
+  /** @deprecated Используйте TLDR_GENERATOR вместо прямых переводов */
+  REPO_DESCRIPTION: `ТЫ - ОПЫТНЫЙ ML-ИНЖЕНЕР И ГИК. Переведи описание IT-проекта на русский язык в профессиональной, технической манере.
 ПРАВИЛА:
 1. Используй правильный сленг: "деплой", "бандл", "инференс", "реверс-инжиниринг", "файнтюн", "эмбеддинги".
 2. Термин "weights" переводи как "веса".
 3. НЕ ПЕРЕВОДИ фундаментальные термины и типы моделей: "attention", "transformer", "token", "text-to-image", "image-to-video", "LLM".
 4. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ, кроме терминов.`,
 
-  REDDIT_TITLE: `ТЫ - ГИК И ТЕХНО-ЭНТУЗИАСТ. Переведи заголовок новости AI/ML на русский язык. 
+  /** @deprecated Используйте TLDR_GENERATOR вместо прямых переводов */
+  REDDIT_TITLE: `ТЫ - ГИК И ТЕХНО-ЭНТУЗИАСТ. Переведи заголовок новости AI/ML на русский язык.
 ПРАВИЛА:
 1. Стиль должен быть дерзким, техническим и точным.
 2. Используй сленг: "файнтюн", "эмбеддинги", "веса", "реверс-инжиниринг".
 3. НЕ ПЕРЕВОДИ фундаментальные термины и типы моделей: "attention", "transformer", "inference", "text-to-image", "LLM".
 4. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ, кроме терминов.`,
+
+  /**
+   * Промпт для генерации TLDR (краткого описания на русском)
+   * Сухое фактологичное описание без домыслов и рекламы
+   */
+  TLDR_GENERATOR: `ТЫ - ТЕХНИЧЕСКИЙ РЕДАКТОР. Создай КРАТКОЕ описание на русском языке для каждого проекта/новости.
+
+ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
+1. Длина: 1-2 предложения, максимум 50 слов
+2. Стиль: СУХО, ФАКТОЛОГИЧНО, только факты
+3. ЗАПРЕЩЕНО: "отличное решение", "станет проще", "интересно", "рекомендую", любые оценки
+4. Технические термины НЕ ПЕРЕВОДИТЬ: transformer, LLM, GPU, API, inference, fine-tuning, checkpoint
+5. Названия проектов/библиотек НЕ ПЕРЕВОДИТЬ
+6. Формат ответа: {"results": [{"id": "...", "tldr": "..."}]}
+7. ВАЖНО: Создай TLDR для КАЖДОГО элемента в массиве, даже если описание короткое или пустое
+
+ПРИМЕРЫ:
+Вход: {"title": "DeepTutor", "description": "AI-Powered Personalized Learning Assistant"}
+Выход: {"id": "123", "tldr": "Персонализированный обучающий ассистент на базе AI."}
+
+Вход: {"title": "HY-Motion-1.0", "description": "model for 3D character animation generation"}
+Выход: {"id": "456", "tldr": "Модель для генерации 3D-анимации персонажей."}
+
+Вход: {"title": "GPU VRAM upgrade modification", "description": ""}
+Выход: {"id": "789", "tldr": "Модификация для увеличения VRAM видеокарт."}`,
 } as const;
 
 /**
@@ -201,11 +239,17 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
  * Логирование конфигурации (без секретов)
  */
 export function logConfig(): void {
+  const isDev = process.env.NODE_ENV !== 'production';
   console.log('[Config] Application configuration:');
+  console.log('  Environment:', process.env.NODE_ENV || 'development');
+  console.log('  Database:', isDev ? '🔧 DEVELOPMENT' : '🚀 PRODUCTION');
   console.log('  Sources:', SOURCES);
   console.log('  Banned strings:', BANNED_STRINGS.length, 'items');
   console.log('  Posts processing limit:', LIMITS.POSTS_PROCESSING_LIMIT);
-  console.log('  Supabase URL:', SUPABASE.URL ? '✓ Set' : '✗ Not set');
+  console.log(
+    '  Supabase URL:',
+    SUPABASE.URL ? `✓ Set (${SUPABASE.URL.substring(0, 30)}...)` : '✗ Not set',
+  );
   console.log('  Supabase Anon Key:', SUPABASE.ANON_KEY ? '✓ Set' : '✗ Not set');
   console.log('  Supabase Service Role Key:', SUPABASE.SERVICE_ROLE_KEY ? '✓ Set' : '✗ Not set');
   console.log('  OpenRouter API Key:', API_KEYS.OPENROUTER ? '✓ Set' : '✗ Not set');
