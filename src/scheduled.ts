@@ -8,6 +8,7 @@ import {
 import type { Post } from './types';
 import { translateBatch } from './services/llm.js';
 import { addExecutionLog } from './utils.js';
+import { LIMITS, LLM_PROMPTS } from './config.js';
 
 /**
  * @file scheduled.ts
@@ -38,8 +39,8 @@ export async function updateContent(): Promise<void> {
   // Сортируем по весу (рейтингу) перед обрезкой
   allFetchedPosts.sort((a, b) => posts.scorePost(b) - posts.scorePost(a));
 
-  // Временный лимит 150 топовых постов
-  const limitedPosts = allFetchedPosts.slice(0, 150);
+  // Лимит топовых постов для обработки
+  const limitedPosts = allFetchedPosts.slice(0, LIMITS.POSTS_PROCESSING_LIMIT);
   const activeModel = await posts.getActiveModel();
 
   addExecutionLog(
@@ -67,23 +68,9 @@ export async function updateContent(): Promise<void> {
         `Starting batch translation for ${repoBatch.length + redditBatch.length} items...`,
       );
 
-      const nerdPromptRepo = `ТЫ - ОПЫТНЫЙ ML-ИНЖЕНЕР И ГИК. Переведи описание IT-проекта на русский язык в профессиональной, технической манере. 
-      ПРАВИЛА:
-      1. Используй правильный сленг: "деплой", "бандл", "инференс", "реверс-инжиниринг", "файнтюн", "эмбеддинги".
-      2. Термин "weights" переводи как "веса".
-      3. НЕ ПЕРЕВОДИ фундаментальные термины и типы моделей: "attention", "transformer", "token", "text-to-image", "image-to-video", "LLM".
-      4. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ, кроме терминов.`;
-
-      const nerdPromptReddit = `ТЫ - ГИК И ТЕХНО-ЭНТУЗИАСТ. Переведи заголовок новости AI/ML на русский язык. 
-      ПРАВИЛА:
-      1. Стиль должен быть дерзким, техническим и точным.
-      2. Используй сленг: "файнтюн", "эмбеддинги", "веса", "реверс-инжиниринг".
-      3. НЕ ПЕРЕВОДИ фундаментальные термины и типы моделей: "attention", "transformer", "inference", "text-to-image", "LLM".
-      4. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ, кроме терминов.`;
-
       const [repoTranslations, redditTranslations] = await Promise.all([
-        translateBatch(repoBatch, nerdPromptRepo, activeModel),
-        translateBatch(redditBatch, nerdPromptReddit, activeModel),
+        translateBatch(repoBatch, LLM_PROMPTS.REPO_DESCRIPTION, activeModel),
+        translateBatch(redditBatch, LLM_PROMPTS.REDDIT_TITLE, activeModel),
       ]);
 
       // 3. Сопоставляем результаты перевода только для новых постов

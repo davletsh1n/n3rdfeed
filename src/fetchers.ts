@@ -1,16 +1,16 @@
 /**
  * @file fetchers.ts
  * @description Модуль для сбора данных из внешних API (GitHub, HuggingFace, Reddit, Replicate).
- * @inputs
- *   - API Токены (env): REPLICATE_API_TOKEN.
- *   - Внешние эндпоинты: GitHub Search API, HuggingFace API, Reddit JSON API.
- * @outputs
- *   - Экспортирует асинхронные функции для получения списков постов (Post[]).
- *   - Выполняет первичную нормализацию и санитайзинг текста.
  */
 
 import Replicate from 'replicate';
 import type { Post } from './types.js';
+import type {
+  GitHubSearchResponse,
+  HuggingFaceModel,
+  RedditResponse,
+  ReplicateModel,
+} from './types/api.js';
 import {
   hashStringToInt,
   truncateWithoutBreakingWords,
@@ -18,22 +18,23 @@ import {
   sanitizeContent,
   addExecutionLog,
 } from './utils.js';
+import { API_KEYS, LIMITS, REDDIT_SUBREDDITS, REDDIT_FLAIR_FILTERS } from './config.js';
 
 /**
  * Сборщик моделей из Replicate.
  * Replicate - это облачная платформа для запуска ML-моделей.
  */
 export async function fetchReplicatePosts(): Promise<Post[]> {
-  const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
+  const replicate = new Replicate({ auth: API_KEYS.REPLICATE });
   const posts: Post[] = [];
-  const limit = 1000;
+  const limit = LIMITS.REPLICATE_LIMIT;
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
   outer: for await (const batch of replicate.paginate(replicate.models.list)) {
     if (posts.length >= limit) break;
 
-    for (const model of batch) {
+    for (const model of batch as ReplicateModel[]) {
       if (!model.latest_version?.id || model.run_count <= 1) continue;
       if (new Date(model.latest_version.created_at) < oneWeekAgo) break outer;
 
@@ -61,9 +62,9 @@ export async function fetchReplicatePosts(): Promise<Post[]> {
  */
 export async function fetchHuggingFacePosts(): Promise<Post[]> {
   const resp = await fetch(
-    'https://huggingface.co/api/models?full=true&limit=5000&sort=lastModified&direction=-1',
+    `https://huggingface.co/api/models?full=true&limit=${LIMITS.HUGGINGFACE_LIMIT}&sort=lastModified&direction=-1`,
   );
-  const repos = (await resp.json()) as any[];
+  const repos = (await resp.json()) as HuggingFaceModel[];
   const posts: Post[] = [];
 
   for (const repo of repos) {
@@ -89,46 +90,18 @@ export async function fetchHuggingFacePosts(): Promise<Post[]> {
 }
 
 /**
- * Вспомогательная функция для получения описания из README (больше не используется для HF, но оставлена для справки)
- */
-async function getHuggingFaceRepoDescription(repo: any): Promise<string> {
-  const readmeFilename = repo.siblings?.find(
-    (s: any) => s.rfilename.toLowerCase() === 'readme.md',
-  )?.rfilename;
-
-  if (!readmeFilename) return '';
-
-  try {
-    const resp = await fetch(`https://huggingface.co/${repo.id}/raw/main/${readmeFilename}`);
-    const readmeText = await resp.text();
-
-    const modelDescMatch = readmeText.match(
-      /(?:^|\n)##\s*(?:Model [Dd]escription|Overview:?)[\r\n]+([\s\S]*?)(?:[\r\n]+\s*#|$)/,
-    );
-    if (modelDescMatch?.[1]) return modelDescMatch[1].trim();
-
-    const firstHeadingMatch = readmeText.match(
-      /(?:^|\n)##?\s*[^#\n]+[\r\n]+([\s\S]*?)(?:[\r\n]+\s*#|$)/,
-    );
-    return firstHeadingMatch?.[1]?.trim() || '';
-  } catch {
-    return '';
-  }
-}
-
-/**
  * Сборщик репозиториев из GitHub.
  * Ищет популярные Python-проекты, созданные за последнюю неделю.
  */
 export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
   const posts: Post[] = [];
 
-  for (let page = 1; page <= 5; page++) {
+  for (let page = 1; page <= LIMITS.GITHUB_PAGES_LIMIT; page++) {
     const resp = await fetch(
-      `https://api.github.com/search/repositories?q=language:python+created:>${lastWeekDate}&sort=stars&order=desc&per_page=100&page=${page}`,
+      `https://api.github.com/search/repositories?q=language:python+created:>${lastWeekDate}&sort=stars&order=desc&per_page=${LIMITS.GITHUB_PER_PAGE}&page=${page}`,
       { headers: { 'User-Agent': 'hype-news-aggregator' } },
     );
-    const data = (await resp.json()) as any;
+    const data = (await resp.json()) as GitHubSearchResponse;
 
     for (const repo of data.items || []) {
       posts.push({
@@ -153,16 +126,11 @@ export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
  * Сборщик популярных постов из тематических сабреддитов.
  */
 export async function fetchRedditPosts(): Promise<Post[]> {
-  const subreddits = ['machinelearning', 'localllama', 'StableDiffusion'];
-  const flairFilters: Record<string, string[]> = {
-    StableDiffusion: ['News', 'Resource | Update'],
-  };
   const posts: Post[] = [];
 
-  for (const subreddit of subreddits) {
+  for (const subreddit of REDDIT_SUBREDDITS) {
     try {
-      // Добавляем .json в конец URL и используем более надежный User-Agent
-      const url = `https://www.reddit.com/r/${subreddit}/top.json?t=week&limit=100`;
+      const url = `https://www.reddit.com/r/${subreddit}/top.json?t=week&limit=${LIMITS.REDDIT_LIMIT}`;
       const resp = await fetch(url, {
         headers: {
           'User-Agent':
@@ -176,7 +144,7 @@ export async function fetchRedditPosts(): Promise<Post[]> {
         continue;
       }
 
-      const data = (await resp.json()) as any;
+      const data = (await resp.json()) as RedditResponse;
 
       for (const thread of data.data?.children || []) {
         const {
@@ -190,8 +158,8 @@ export async function fetchRedditPosts(): Promise<Post[]> {
           link_flair_text,
         } = thread.data;
 
-        const flairFilter = flairFilters[sub];
-        if (flairFilter && !flairFilter.includes(link_flair_text)) continue;
+        const flairFilter = REDDIT_FLAIR_FILTERS[sub];
+        if (flairFilter && link_flair_text && !flairFilter.includes(link_flair_text)) continue;
 
         posts.push({
           id: base36ToInt(id),

@@ -1,21 +1,15 @@
 /**
  * @file db.ts
  * @description Слой работы с базой данных (Supabase). Управляет запросами, сохранением (upsert) и фильтрацией контента.
- * @inputs
- *   - Переменные окружения: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
- *   - Данные постов (Post[]) для сохранения.
- * @outputs
- *   - Экспортирует объект `posts` с методами `query`, `upsertMany` и `getLastUpdated`.
- *   - Выполняет фильтрацию по "черному списку" слов и расчет рейтинга (scoring).
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Post, LLMUsage } from './types.js';
-
-const BANNED_STRINGS = ['nft', 'crypto', 'telegram', 'clicker', 'solana', 'stealer'];
+import { SUPABASE, LIMITS, SCORING } from './config.js';
+import { isValidPost } from './validators.js';
 
 function getClient(): SupabaseClient {
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
+  return createClient(SUPABASE.URL, SUPABASE.ANON_KEY, {
     auth: {
       persistSession: false,
     },
@@ -23,27 +17,16 @@ function getClient(): SupabaseClient {
 }
 
 function getServiceRoleClient(): SupabaseClient {
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+  return createClient(SUPABASE.URL, SUPABASE.SERVICE_ROLE_KEY, {
     auth: {
       persistSession: false,
     },
   });
 }
 
-function isValidPost(post: Post): boolean {
-  const name = post.name?.toLowerCase() || '';
-  const desc = post.description?.toLowerCase() || '';
-  if (!post.username?.trim()) return false;
-  for (const s of BANNED_STRINGS) {
-    if (name.includes(s) || desc.includes(s)) return false;
-  }
-  if (name.includes('stake') && name.includes('predict')) return false;
-  return true;
-}
-
 function scorePost(post: Post): number {
-  if (post.source === 'reddit') return post.stars * 0.3;
-  if (post.source === 'replicate') return Math.pow(post.stars, 0.6);
+  if (post.source === 'reddit') return post.stars * SCORING.REDDIT_MULTIPLIER;
+  if (post.source === 'replicate') return Math.pow(post.stars, SCORING.REPLICATE_POWER);
   return post.stars;
 }
 
@@ -73,7 +56,7 @@ export const posts = {
       .from('repositories')
       .select('*')
       .order('stars', { ascending: false })
-      .limit(500)
+      .limit(LIMITS.POSTS_QUERY_LIMIT)
       .in('source', sourcesLower)
       .gt('created_at', fromDate.toISOString())
       .gt('inserted_at', fromDate.toISOString());
@@ -134,13 +117,17 @@ export const posts = {
    * Получение последних логов использования LLM
    */
   async getLLMLogs(limit: number = 10) {
-    const client = getClient();
+    const client = getServiceRoleClient();
     const { data, error } = await client
       .from('llm_usage')
       .select('*')
       .order('created_at', { ascending: false })
       .limit(limit);
-    if (error) throw new Error(`Error fetching logs: ${error.message}`);
+    if (error) {
+      console.error(`[DB] Error fetching LLM logs:`, error);
+      throw new Error(`Error fetching logs: ${error.message}`);
+    }
+    console.log(`[DB] Fetched ${data?.length || 0} LLM logs`);
     return data;
   },
 
@@ -148,9 +135,13 @@ export const posts = {
    * Получение статистики расходов
    */
   async getStats(days: number = 30) {
-    const client = getClient();
+    const client = getServiceRoleClient();
     const { data, error } = await client.rpc('get_llm_stats', { days_limit: days });
-    if (error) throw new Error(`Error fetching stats: ${error.message}`);
+    if (error) {
+      console.error(`[DB] Error fetching LLM stats:`, error);
+      throw new Error(`Error fetching stats: ${error.message}`);
+    }
+    console.log(`[DB] Fetched stats:`, data);
     return data;
   },
 

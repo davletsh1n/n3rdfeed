@@ -1,71 +1,12 @@
 /**
  * @file llm.ts
  * @description Сервис для взаимодействия с OpenRouter API. Отвечает за перевод контента и логирование расходов.
- * @inputs
- *   - OPENROUTER_API_KEY (env)
- *   - Текст для перевода и модель.
- * @outputs
- *   - Переведенный текст.
- *   - Данные о расходах (токены, стоимость).
  */
 
 import { LLMUsage } from '../types.js';
+import { API_KEYS } from '../config.js';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-
-/**
- * Основная функция для перевода текста через LLM.
- * @param text Текст на английском
- * @param prompt Инструкция для модели
- * @param model Модель (по умолчанию gpt-4o-mini для баланса цены/качества)
- */
-export async function translateText(
-  text: string,
-  prompt: string,
-  model: string = 'openai/gpt-4o-mini',
-): Promise<{ translatedText: string; usage: LLMUsage }> {
-  if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error('OPENROUTER_API_KEY is not defined');
-  }
-
-  const response = await fetch(OPENROUTER_API_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'HTTP-Referer': 'https://github.com/n3rdfeed', // Обязательно для OpenRouter
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: 'system', content: prompt },
-        { role: 'user', content: text },
-      ],
-      temperature: 0.3, // Низкая температура для более точного перевода
-    }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(`OpenRouter API error: ${JSON.stringify(error)}`);
-  }
-
-  const data = await response.json();
-
-  // Извлекаем переведенный текст
-  const translatedText = data.choices[0].message.content.trim();
-
-  // Извлекаем данные об использовании для мониторинга расходов
-  // OpenRouter возвращает стоимость в поле 'usage' (иногда нужно запрашивать отдельно, но в чате обычно есть токены)
-  const usage: LLMUsage = {
-    model_id: model,
-    prompt_tokens: data.usage.prompt_tokens,
-    completion_tokens: data.usage.completion_tokens,
-    total_cost: calculateCost(model, data.usage.prompt_tokens, data.usage.completion_tokens),
-  };
-
-  return { translatedText, usage };
-}
 
 /**
  * Тарифы моделей (цена за 1 млн токенов в USD)
@@ -81,32 +22,37 @@ export const MODEL_RATES: Record<string, { name: string; prompt: number; complet
  * Получение текущего баланса аккаунта OpenRouter.
  */
 export async function getOpenRouterBalance(): Promise<number> {
-  if (!process.env.OPENROUTER_API_KEY) return 0;
+  if (!process.env.OPENROUTER_API_KEY) {
+    console.warn('[OpenRouter] API key not configured');
+    return 0;
+  }
 
   try {
-    const response = await fetch('https://openrouter.ai/api/v1/credits', {
+    const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
       headers: {
         Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       },
     });
-    if (!response.ok) return 0;
+
+    if (!response.ok) {
+      console.error(`[OpenRouter] Balance API returned ${response.status}`);
+      return 0;
+    }
+
     const data = await response.json();
-    // Логируем полный ответ баланса для отладки в терминал Vite
-    console.log('[OpenRouter] Balance API Response:', JSON.stringify(data));
+    console.log('[OpenRouter] Balance API Response:', JSON.stringify(data, null, 2));
 
-    // Согласно документации и вашему скриншоту, нам нужно именно то, что доступно.
-    // Если total_credits показывает 207, а у вас 41, значит 207 - это общая сумма пополнений за все время.
-    // Нам нужно вычесть total_usage.
-    const totalCredits = data.data?.total_credits || 0;
-    const totalUsage = data.data?.total_usage || 0;
-    const actualBalance = totalCredits - totalUsage;
+    // OpenRouter API возвращает limit и usage
+    // Баланс = limit - usage
+    const limit = data.data?.limit || 0;
+    const usage = data.data?.usage || 0;
+    const balance = limit - usage;
 
-    console.log(
-      `[OpenRouter] Calculated Balance: ${totalCredits} - ${totalUsage} = ${actualBalance}`,
-    );
-    return actualBalance;
+    console.log(`[OpenRouter] Balance calculation: limit(${limit}) - usage(${usage}) = ${balance}`);
+
+    return Math.max(0, balance); // Не возвращаем отрицательный баланс
   } catch (err) {
-    console.error('Failed to fetch OpenRouter balance:', err);
+    console.error('[OpenRouter] Failed to fetch balance:', err);
     return 0;
   }
 }

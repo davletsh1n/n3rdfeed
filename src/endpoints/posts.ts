@@ -1,4 +1,5 @@
 import { contentJson, OpenAPIRoute } from 'chanfana';
+import { Context } from 'hono';
 import { z } from 'zod';
 import { posts, FilterType } from '../db.js';
 
@@ -36,7 +37,7 @@ export class ListPosts extends OpenAPIRoute {
     },
   };
 
-  async handle(c: any) {
+  async handle(c: Context) {
     const data = await this.getValidatedData<typeof this.schema>();
     const { filter, sources: sourcesStr } = data.query;
     const sources = sourcesStr.split(',');
@@ -63,7 +64,7 @@ export class GetLastUpdated extends OpenAPIRoute {
     },
   };
 
-  async handle(c: any) {
+  async handle(c: Context) {
     const lastUpdated = await posts.getLastUpdated();
     return { success: true, result: { lastUpdated: lastUpdated || '' } };
   }
