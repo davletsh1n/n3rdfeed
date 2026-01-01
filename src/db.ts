@@ -59,6 +59,11 @@ function getFromDate(filter: FilterType): Date {
 }
 
 export const posts = {
+  /**
+   * Вспомогательная функция для скоринга постов (экспортирована для использования в других модулях)
+   */
+  scorePost,
+
   async query(options: { filter: FilterType; sources: string[] }): Promise<Post[]> {
     const client = getClient();
     const fromDate = getFromDate(options.filter);
@@ -82,22 +87,32 @@ export const posts = {
 
   async upsertMany(posts: Post[]): Promise<void> {
     const client = getServiceRoleClient();
-    const { error } = await client.from('repositories').upsert(
-      posts.map((post) => ({
-        id: post.id,
-        source: post.source,
-        username: post.username,
-        name: post.name,
-        name_ru: post.name_ru,
-        description: post.description,
-        description_ru: post.description_ru,
-        stars: post.stars,
-        url: post.url,
-        created_at: post.created_at,
-      })),
-      { onConflict: 'id,source' },
-    );
-    if (error) throw new Error(`Database error upserting posts: ${error.message}`);
+    const dataToUpsert = posts.map((post) => ({
+      id: post.id,
+      source: post.source,
+      username: post.username,
+      name: post.name,
+      name_ru: post.name_ru || null,
+      description: post.description,
+      description_ru: post.description_ru || null,
+      stars: post.stars,
+      url: post.url,
+      created_at: post.created_at,
+    }));
+
+    console.log(`[DB] Upserting ${dataToUpsert.length} rows to 'repositories' table...`);
+
+    const { data, error } = await client
+      .from('repositories')
+      .upsert(dataToUpsert, { onConflict: 'id,source' })
+      .select();
+
+    if (error) {
+      console.error(`[DB] Upsert error:`, JSON.stringify(error));
+      throw new Error(`Database error upserting posts: ${error.message}`);
+    }
+
+    console.log(`[DB] Upsert success. Rows affected: ${data?.length || 0}`);
   },
 
   /**
@@ -180,5 +195,16 @@ export const posts = {
 
     if (error) throw new Error(`Database error checking existing IDs: ${error.message}`);
     return new Set((data || []).map((item) => item.id));
+  },
+
+  /**
+   * Получение постов по списку ID.
+   */
+  async queryByIds(ids: string[]): Promise<Post[]> {
+    if (ids.length === 0) return [];
+    const client = getClient();
+    const { data, error } = await client.from('repositories').select('*').in('id', ids);
+    if (error) throw new Error(`Database error querying by IDs: ${error.message}`);
+    return data || [];
   },
 };

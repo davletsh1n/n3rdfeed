@@ -161,10 +161,21 @@ export async function fetchRedditPosts(): Promise<Post[]> {
 
   for (const subreddit of subreddits) {
     try {
-      const resp = await fetch(
-        `https://www.reddit.com/r/${subreddit}/top.json?sort=top&t=week&limit=100`,
-        { headers: { 'User-Agent': 'hype-news-aggregator' } },
-      );
+      // Добавляем .json в конец URL и используем более надежный User-Agent
+      const url = `https://www.reddit.com/r/${subreddit}/top.json?t=week&limit=100`;
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept: 'application/json',
+        },
+      });
+
+      if (!resp.ok) {
+        addExecutionLog(`[Reddit] Error fetching r/${subreddit}: ${resp.status}`);
+        continue;
+      }
+
       const data = (await resp.json()) as any;
 
       for (const thread of data.data?.children || []) {

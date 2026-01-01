@@ -11,7 +11,7 @@ import { addExecutionLog } from './utils.js';
 
 /**
  * @file scheduled.ts
- * @description Координатор процесса обновления контента. Запускает сборщики, переводит контент пакетами и сохраняет результаты в БД.
+ * @description Координатор процесса обновления контента. Запускает сборщики, фильтрует дубликаты, переводит новые посты и сохраняет их в БД.
  */
 
 export async function updateContent(): Promise<void> {
@@ -28,24 +28,32 @@ export async function updateContent(): Promise<void> {
     fetchReplicatePosts(),
   ]);
 
-  const allPosts: Post[] = [
+  const allFetchedPosts: Post[] = [
     ...huggingFacePosts,
     ...gitHubPosts,
     ...redditPosts,
     ...replicatePosts,
-  ].slice(0, 100); // Временный лимит 100 постов для проверки
+  ];
+
+  // Сортируем по весу (рейтингу) перед обрезкой
+  allFetchedPosts.sort((a, b) => posts.scorePost(b) - posts.scorePost(a));
+
+  // Временный лимит 150 топовых постов
+  const limitedPosts = allFetchedPosts.slice(0, 150);
   const activeModel = await posts.getActiveModel();
 
-  addExecutionLog(`Total posts fetched: ${allPosts.length}. Checking for existing IDs...`);
+  addExecutionLog(
+    `Total posts fetched from APIs: ${allFetchedPosts.length}. Processing top 150 by score.`,
+  );
 
-  // 1. Фильтруем посты, которые уже есть в БД
-  const existingIds = await posts.getExistingIds(allPosts.map((p) => p.id));
-  const newPosts = allPosts.filter((p) => !existingIds.has(p.id));
+  // 1. Фильтруем дубликаты на входе: оставляем только те посты, которых НЕТ в базе данных
+  const existingIds = await posts.getExistingIds(limitedPosts.map((p) => p.id));
+  const newPosts = limitedPosts.filter((p) => !existingIds.has(p.id));
 
-  addExecutionLog(`New posts to translate: ${newPosts.length}`);
+  addExecutionLog(`New unique posts identified: ${newPosts.length}`);
 
   if (newPosts.length > 0) {
-    // 2. Группируем только НОВЫЕ посты для пакетного перевода
+    // 2. Группируем только НОВЫЕ посты для пакетного перевода (исключаем HuggingFace)
     const repoBatch = newPosts
       .filter((p) => (p.source === 'github' || p.source === 'replicate') && p.description)
       .map((p) => ({ id: p.id, text: p.description }));
@@ -54,68 +62,68 @@ export async function updateContent(): Promise<void> {
       .filter((p) => p.source === 'reddit')
       .map((p) => ({ id: p.id, text: p.name }));
 
-    addExecutionLog(
-      `Starting batch translation: ${repoBatch.length} repos, ${redditBatch.length} reddit posts...`,
-    );
+    if (repoBatch.length > 0 || redditBatch.length > 0) {
+      addExecutionLog(
+        `Starting batch translation for ${repoBatch.length + redditBatch.length} items...`,
+      );
 
-    // 3. Выполняем пакетные запросы
-    const [repoTranslations, redditTranslations] = await Promise.all([
-      translateBatch(
-        repoBatch,
-        'ПЕРЕВЕДИ ОПИСАНИЕ IT-ПРОЕКТА НА РУССКИЙ ЯЗЫК. Используй профессиональный сленг. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ.',
-        activeModel,
-      ),
-      translateBatch(
-        redditBatch,
-        'ПЕРЕВЕДИ ЗАГОЛОВОК НОВОСТИ AI/ML НА РУССКИЙ ЯЗЫК. Сохраняй стиль IT-медиа. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ.',
-        activeModel,
-      ),
-    ]);
+      const nerdPromptRepo = `ТЫ - ОПЫТНЫЙ ML-ИНЖЕНЕР И ГИК. Переведи описание IT-проекта на русский язык в профессиональной, технической манере. 
+      ПРАВИЛА:
+      1. Используй правильный сленг: "деплой", "бандл", "инференс", "реверс-инжиниринг", "файнтюн", "эмбеддинги".
+      2. Термин "weights" переводи как "веса".
+      3. НЕ ПЕРЕВОДИ фундаментальные термины и типы моделей: "attention", "transformer", "token", "text-to-image", "image-to-video", "LLM".
+      4. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ, кроме терминов.`;
 
-    // 4. Сопоставляем результаты (ВАЖНО: обновляем объекты в allPosts)
-    allPosts.forEach((post) => {
-      const translatedDesc = repoTranslations.translations[post.id];
-      const translatedName = redditTranslations.translations[post.id];
+      const nerdPromptReddit = `ТЫ - ГИК И ТЕХНО-ЭНТУЗИАСТ. Переведи заголовок новости AI/ML на русский язык. 
+      ПРАВИЛА:
+      1. Стиль должен быть дерзким, техническим и точным.
+      2. Используй сленг: "файнтюн", "эмбеддинги", "веса", "реверс-инжиниринг".
+      3. НЕ ПЕРЕВОДИ фундаментальные термины и типы моделей: "attention", "transformer", "inference", "text-to-image", "LLM".
+      4. НЕ ОСТАВЛЯЙ АНГЛИЙСКИЙ ТЕКСТ, кроме терминов.`;
 
-      if (translatedDesc) {
-        post.description_ru = translatedDesc;
-      }
-      if (translatedName) {
-        post.name_ru = translatedName;
-      }
-    });
+      const [repoTranslations, redditTranslations] = await Promise.all([
+        translateBatch(repoBatch, nerdPromptRepo, activeModel),
+        translateBatch(redditBatch, nerdPromptReddit, activeModel),
+      ]);
 
-    // 5. Логируем расходы
-    const logUsage = async (batchResult: any, count: number) => {
-      if (count > 0) {
-        const totalTokens = batchResult.usage.prompt_tokens + batchResult.usage.completion_tokens;
-        const totalCost = batchResult.usage.total_cost;
+      // 3. Сопоставляем результаты перевода только для новых постов
+      newPosts.forEach((post) => {
+        const translatedDesc = repoTranslations.translations[post.id];
+        const translatedName = redditTranslations.translations[post.id];
 
-        addExecutionLog(
-          `LLM Response received. Tokens: ${totalTokens}. Cost: $${totalCost.toFixed(5)}`,
-        );
+        if (translatedDesc) post.description_ru = translatedDesc;
+        if (translatedName) post.name_ru = translatedName;
+      });
 
-        await posts.logLLMUsage({
-          ...batchResult.usage,
-          post_id: `BATCH_${Date.now()}`,
-        });
-      }
-    };
+      // 4. Логируем расходы
+      const logUsage = async (batchResult: any, count: number) => {
+        if (count > 0) {
+          const totalTokens = batchResult.usage.prompt_tokens + batchResult.usage.completion_tokens;
+          addExecutionLog(
+            `LLM Response: ${totalTokens} tokens used. Cost: $${batchResult.usage.total_cost.toFixed(
+              5,
+            )}`,
+          );
+          await posts.logLLMUsage({ ...batchResult.usage, post_id: `BATCH_${Date.now()}` });
+        }
+      };
 
-    await Promise.all([
-      logUsage(repoTranslations, repoBatch.length),
-      logUsage(redditTranslations, redditBatch.length),
-    ]);
+      await Promise.all([
+        logUsage(repoTranslations, repoBatch.length),
+        logUsage(redditTranslations, redditBatch.length),
+      ]);
+    }
+
+    // 5. Сохраняем только НОВЫЕ посты в базу данных
+    try {
+      addExecutionLog(`Attempting to insert ${newPosts.length} new posts...`);
+      await posts.upsertMany(newPosts);
+      addExecutionLog(`Successfully added ${newPosts.length} new posts to database`);
+    } catch (err) {
+      addExecutionLog(`Error inserting posts: ${err}`);
+      console.error('Insert error details:', err);
+    }
   } else {
-    addExecutionLog('No new posts to translate. Skipping LLM calls.');
-  }
-
-  try {
-    addExecutionLog(`Attempting to upsert ${allPosts.length} posts...`);
-    await posts.upsertMany(allPosts);
-    addExecutionLog(`Upserted ${allPosts.length} posts to database successfully`);
-  } catch (err) {
-    addExecutionLog(`Error upserting posts: ${err}`);
-    console.error('Upsert error details:', err);
+    addExecutionLog('No new posts to process. Database is up to date.');
   }
 }
