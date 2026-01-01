@@ -1,6 +1,7 @@
 /**
  * @file index.ts
  * @description Главная точка входа приложения. Управляет маршрутизацией (Hono), рендерингом страниц (Mustache) и API-эндпоинтами.
+ * Оптимизировано для Vercel Edge Runtime через Vite Build-time Inlining.
  */
 
 import { ApiException, fromHono } from 'chanfana';
@@ -8,9 +9,6 @@ import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import Mustache from 'mustache';
-import fs from 'node:fs';
-import path from 'node:path';
-import { config } from 'dotenv';
 import { ListPosts, GetLastUpdated } from './endpoints/posts.js';
 import { updateContent } from './scheduled.js';
 import { posts, FilterType } from './db.js';
@@ -18,18 +16,10 @@ import type { Post } from './types';
 import { MODEL_RATES, getOpenRouterBalance } from './services/llm.js';
 import { executionLogs, clearExecutionLogs } from './utils.js';
 
-// Загружаем переменные окружения
-config();
-
-// Загрузка шаблонов
-const PAGE_TEMPLATE = fs.readFileSync(
-  path.resolve(process.cwd(), 'src/templates/page.html'),
-  'utf-8',
-);
-const ADMIN_TEMPLATE = fs.readFileSync(
-  path.resolve(process.cwd(), 'src/templates/admin.html'),
-  'utf-8',
-);
+// Импорт шаблонов как строк через Vite (?raw)
+// Это позволяет держать HTML отдельно, но в бандле они будут константами
+import PAGE_TEMPLATE from './templates/page.html?raw';
+import ADMIN_TEMPLATE from './templates/admin.html?raw';
 
 const ALL_SOURCES = ['GitHub', 'Replicate', 'HuggingFace', 'Reddit'];
 
