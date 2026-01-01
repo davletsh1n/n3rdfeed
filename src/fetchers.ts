@@ -1,7 +1,27 @@
+/**
+ * @file fetchers.ts
+ * @description Модуль для сбора данных из внешних API (GitHub, HuggingFace, Reddit, Replicate).
+ * @inputs
+ *   - API Токены (env): REPLICATE_API_TOKEN.
+ *   - Внешние эндпоинты: GitHub Search API, HuggingFace API, Reddit JSON API.
+ * @outputs
+ *   - Экспортирует асинхронные функции для получения списков постов (Post[]).
+ *   - Выполняет первичную нормализацию и санитайзинг текста.
+ */
+
 import Replicate from 'replicate';
 import type { Post } from './types.js';
-import { hashStringToInt, truncateWithoutBreakingWords, base36ToInt } from './utils.js';
+import {
+  hashStringToInt,
+  truncateWithoutBreakingWords,
+  base36ToInt,
+  sanitizeContent,
+} from './utils.js';
 
+/**
+ * Сборщик моделей из Replicate.
+ * Replicate - это облачная платформа для запуска ML-моделей.
+ */
 export async function fetchReplicatePosts(): Promise<Post[]> {
   const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });
   const posts: Post[] = [];
@@ -22,7 +42,8 @@ export async function fetchReplicatePosts(): Promise<Post[]> {
         username: model.owner,
         name: model.name,
         stars: model.run_count,
-        description: model.description || '',
+        // Нормализуем описание перед сохранением
+        description: sanitizeContent(model.description || ''),
         url: model.url,
         created_at: model.latest_version!.created_at,
       });
@@ -33,6 +54,10 @@ export async function fetchReplicatePosts(): Promise<Post[]> {
   return posts;
 }
 
+/**
+ * Сборщик моделей из HuggingFace.
+ * HuggingFace - это "GitHub для ML моделей".
+ */
 export async function fetchHuggingFacePosts(): Promise<Post[]> {
   const resp = await fetch(
     'https://huggingface.co/api/models?full=true&limit=5000&sort=lastModified&direction=-1',
@@ -44,7 +69,6 @@ export async function fetchHuggingFacePosts(): Promise<Post[]> {
     if (repo.likes <= 1 || repo.downloads <= 1 || !repo.author) continue;
 
     const repoIdInt = parseInt(repo._id.substring(10), 16);
-    const description = await getHuggingFaceRepoDescription(repo);
 
     posts.push({
       id: repoIdInt.toString(),
@@ -52,7 +76,8 @@ export async function fetchHuggingFacePosts(): Promise<Post[]> {
       username: repo.author,
       name: repo.id.split('/')[1],
       stars: repo.likes,
-      description: truncateWithoutBreakingWords(description, 200),
+      // Для HuggingFace оставляем описание пустым, так как парсинг README часто дает неинформативный результат
+      description: '',
       url: `https://huggingface.co/${repo.id}`,
       created_at: repo.lastModified,
     });
@@ -62,6 +87,9 @@ export async function fetchHuggingFacePosts(): Promise<Post[]> {
   return posts;
 }
 
+/**
+ * Вспомогательная функция для получения описания из README (больше не используется для HF, но оставлена для справки)
+ */
 async function getHuggingFaceRepoDescription(repo: any): Promise<string> {
   const readmeFilename = repo.siblings?.find(
     (s: any) => s.rfilename.toLowerCase() === 'readme.md',
@@ -87,6 +115,10 @@ async function getHuggingFaceRepoDescription(repo: any): Promise<string> {
   }
 }
 
+/**
+ * Сборщик репозиториев из GitHub.
+ * Ищет популярные Python-проекты, созданные за последнюю неделю.
+ */
 export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
   const posts: Post[] = [];
 
@@ -104,7 +136,8 @@ export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
         username: repo.owner.login,
         name: repo.name,
         stars: repo.stargazers_count,
-        description: repo.description || '',
+        // Очищаем описание от возможного мусора
+        description: sanitizeContent(repo.description || ''),
         url: repo.html_url,
         created_at: repo.created_at,
       });
@@ -115,6 +148,9 @@ export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
   return posts;
 }
 
+/**
+ * Сборщик популярных постов из тематических сабреддитов.
+ */
 export async function fetchRedditPosts(): Promise<Post[]> {
   const subreddits = ['machinelearning', 'localllama', 'StableDiffusion'];
   const flairFilters: Record<string, string[]> = {
@@ -149,7 +185,8 @@ export async function fetchRedditPosts(): Promise<Post[]> {
           id: base36ToInt(id),
           source: 'reddit',
           username: author,
-          name: title,
+          // Заголовки Reddit тоже могут содержать странные символы
+          name: sanitizeContent(title),
           stars: score,
           description: `/r/${sub}`,
           url: `https://www.reddit.com${permalink}`,

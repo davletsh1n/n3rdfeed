@@ -89,7 +89,7 @@
             {{#filterLinks}}
             <a
               href="/?filter={{key}}&sources={{sourcesParam}}"
-              class="px-2 py-1 terminal-border {{#active}}bg-black text-white{{/active}} hover:bg-gray-100 transition-colors"
+              class="px-2 py-1 terminal-border {{#active}}bg-black text-white hover:bg-gray-800{{/active}} {{^active}}hover:bg-gray-100{{/active}} transition-colors"
               data-navigate
             >
               [{{label}}]

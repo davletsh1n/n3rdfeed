@@ -1,3 +1,14 @@
+/**
+ * @file db.ts
+ * @description Слой работы с базой данных (Supabase). Управляет запросами, сохранением (upsert) и фильтрацией контента.
+ * @inputs
+ *   - Переменные окружения: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
+ *   - Данные постов (Post[]) для сохранения.
+ * @outputs
+ *   - Экспортирует объект `posts` с методами `query`, `upsertMany` и `getLastUpdated`.
+ *   - Выполняет фильтрацию по "черному списку" слов и расчет рейтинга (scoring).
+ */
+
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Post } from './types.js';
 

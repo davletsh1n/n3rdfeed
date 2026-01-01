@@ -1,215 +1,39 @@
+/**
+ * @file index.ts
+ * @description Главная точка входа приложения. Управляет маршрутизацией (Hono), рендерингом страниц (Mustache) и API-эндпоинтами.
+ * @inputs
+ *   - Переменные окружения (через dotenv): SUPABASE_URL, SUPABASE_ANON_KEY.
+ *   - Шаблон страницы: src/templates/page.html.
+ *   - Параметры запроса: filter (период), sources (список источников).
+ * @outputs
+ *   - Экспортирует экземпляр Hono (app) для сервера и Vercel.
+ *   - Генерирует HTML-страницы и JSON-ответы API.
+ */
+
 import { ApiException, fromHono } from 'chanfana';
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import Mustache from 'mustache';
+import fs from 'node:fs';
+import path from 'node:path';
+import { config } from 'dotenv';
 import { ListPosts, GetLastUpdated } from './endpoints/posts.js';
 import { updateContent } from './scheduled.js';
 import { posts, FilterType } from './db.js';
 import type { Post } from './types';
 
-const PAGE_TEMPLATE = `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>N3RDFEED - ML/AI News</title>
-	<script src="https://cdn.tailwindcss.com"></script>
-	<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&display=swap" rel="stylesheet">
-	<style>
-		:root {
-			--bg: #ffffff;
-			--fg: #000000;
-			--dim: #666666;
-			--accent: #f0f0f0;
-			--border: #000000;
-		}
-		body { 
-			font-family: 'Fira Code', monospace; 
-			background-color: var(--bg);
-			color: var(--fg);
-		}
-		.terminal-border {
-			border: 1px solid var(--border);
-		}
-		.post-item:hover {
-			background-color: var(--accent);
-		}
-		.source-checkbox {
-			display: none;
-		}
-		.source-label {
-			cursor: pointer;
-			padding: 2px 8px;
-			border: 1px solid var(--border);
-			font-size: 0.75rem;
-			transition: all 0.1s;
-			user-select: none;
-		}
-		.source-checkbox:checked + .source-label {
-			background-color: var(--fg);
-			color: var(--bg);
-		}
-		.source-label:hover {
-			background-color: var(--accent);
-		}
-		.source-checkbox:checked + .source-label:hover {
-			opacity: 0.8;
-		}
-		@keyframes blink {
-			0%, 100% { opacity: 1; }
-			50% { opacity: 0; }
-		}
-		.cursor-blink {
-			animation: blink 1s step-end infinite;
-		}
-		::-webkit-scrollbar { width: 8px; }
-		::-webkit-scrollbar-track { background: var(--bg); }
-		::-webkit-scrollbar-thumb { background: #ccc; }
-	</style>
-</head>
-<body class="p-2 md:p-4">
-	<div class="container mx-auto max-w-4xl">
-		<header class="mb-4 terminal-border p-4">
-			<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-				<div>
-					<h1 class="text-2xl font-bold tracking-tighter">
-						<a href="/" class="bg-black text-white px-1">N3RDFEED<span class="cursor-blink">_</span></a>
-					</h1>
-					<p class="text-[10px] text-gray-500 mt-1">> ML/AI News</p>
-				</div>
-				
-				<nav class="flex flex-wrap gap-2 text-sm">
-					{{#filterLinks}}
-					<a href="/?filter={{key}}&sources={{sourcesParam}}" 
-					   class="px-2 py-1 terminal-border {{#active}}bg-black text-white{{/active}} hover:bg-gray-100 transition-colors"
-					   data-navigate>
-						[{{label}}]
-					</a>
-					{{/filterLinks}}
-				</nav>
-			</div>
+// Загружаем переменные окружения из .env файла.
+// Это необходимо, так как Vite dev server для Hono не прокидывает их автоматически в process.env
+config();
 
-			<div class="mt-4 pt-4 border-t border-black flex flex-wrap justify-between items-center gap-4 text-xs">
-				<div class="flex flex-wrap gap-2">
-					{{#sources}}
-					<label class="flex items-center cursor-pointer">
-						<input type="checkbox" class="source-checkbox" data-source="{{name}}" {{#checked}}checked{{/checked}}>
-						<span class="source-label">{{name}}</span>
-					</label>
-					{{/sources}}
-				</div>
-				<div class="text-gray-500 text-[10px]">
-					STATUS: ONLINE | UPDATED: <span id="last-updated">...</span>
-				</div>
-			</div>
-		</header>
-
-		<main class="terminal-border overflow-hidden">
-			<div class="bg-black text-white px-4 py-1 text-[10px] font-bold flex justify-between uppercase tracking-widest">
-				<span>NAME / DESCRIPTION</span>
-				<span class="hidden md:inline">METRICS</span>
-			</div>
-			<ul class="divide-y divide-black">
-				{{#posts}}
-				<li class="post-item p-4 transition-colors">
-					<div class="flex justify-between items-start gap-4">
-						<div class="flex-1 min-w-0">
-							<div class="flex items-center gap-2 mb-1">
-								<span class="text-gray-400 text-xs">{{index}}.</span>
-								<a href="{{url}}" target="_blank" rel="noopener noreferrer" class="font-bold hover:underline block">
-									{{displayName}}
-								</a>
-								<span class="text-[10px] px-1 border border-gray-300 text-gray-500">{{icon}}</span>
-							</div>
-							<p class="text-sm text-gray-600 leading-tight">{{description}}</p>
-						</div>
-						<div class="text-right flex flex-col items-end gap-1 shrink-0">
-							<span class="text-sm font-bold">{{stars}}</span>
-							<span class="text-[9px] bg-black text-white px-1 font-bold">STARS</span>
-						</div>
-					</div>
-				</li>
-				{{/posts}}
-			</ul>
-		</main>
-
-		<footer class="mt-4 p-4 text-center text-[10px] text-gray-400 uppercase tracking-widest">
-			<p>© 2025 N3RDFEED SYSTEM - NO RIGHTS RESERVED</p>
-		</footer>
-	</div>
-
-	<script>
-		const currentFilter = "{{filter}}";
-		const lastUpdatedTimestamp = {{lastUpdatedTimestamp}};
-
-		function timeSince(timestamp) {
-			const seconds = Math.floor((Date.now() - timestamp) / 1000);
-			if (seconds < 60) return seconds + "s";
-			let interval = seconds / 31536000;
-			if (interval > 1) return Math.floor(interval) + "y";
-			interval = seconds / 2592000;
-			if (interval > 1) return Math.floor(interval) + "mo";
-			interval = seconds / 86400;
-			if (interval > 1) return Math.floor(interval) + "d";
-			interval = seconds / 3600;
-			if (interval > 1) return Math.floor(interval) + "h";
-			interval = seconds / 60;
-			if (interval > 1) return Math.floor(interval) + "m";
-			return Math.floor(seconds) + "s";
-		}
-
-		function updateLastUpdated() {
-			const el = document.getElementById('last-updated');
-			if (el && lastUpdatedTimestamp) {
-				el.textContent = timeSince(lastUpdatedTimestamp).toUpperCase() + ' AGO';
-			}
-		}
-
-		updateLastUpdated();
-		setInterval(updateLastUpdated, 1000);
-
-		function getSelectedSources() {
-			return [...document.querySelectorAll('[data-source]:checked')].map(c => c.dataset.source);
-		}
-
-		function buildUrl(filter, sources) {
-			return '/?filter=' + filter + '&sources=' + sources.join(',');
-		}
-
-		async function navigate(url) {
-			document.querySelectorAll('[data-source]').forEach(cb => {
-				cb.disabled = true;
-			});
-			history.pushState(null, '', url);
-			const res = await fetch(url);
-			const html = await res.text();
-			const doc = new DOMParser().parseFromString(html, 'text/html');
-			
-			document.querySelector('.container').innerHTML = doc.querySelector('.container').innerHTML;
-			attachListeners();
-			updateLastUpdated();
-		}
-
-		function attachListeners() {
-			document.querySelectorAll('[data-source]').forEach(cb => {
-				cb.addEventListener('change', () => {
-					navigate(buildUrl(currentFilter, getSelectedSources()));
-				});
-			});
-			document.querySelectorAll('[data-navigate]').forEach(a => {
-				a.addEventListener('click', (e) => {
-					e.preventDefault();
-					navigate(a.href);
-				});
-			});
-		}
-
-		window.addEventListener('popstate', () => navigate(location.href));
-		attachListeners();
-	</script>
-</body>
-</html>`;
+/**
+ * Загружаем шаблон из файла.
+ * В Vite-окружении мы можем использовать плагины для импорта,
+ * но для совместимости с текущим кодом читаем файл напрямую.
+ */
+const templatePath = path.resolve(process.cwd(), 'src/templates/page.html');
+const PAGE_TEMPLATE = fs.readFileSync(templatePath, 'utf-8');
 
 const ALL_SOURCES = ['GitHub', 'Replicate', 'HuggingFace', 'Reddit'];
 
