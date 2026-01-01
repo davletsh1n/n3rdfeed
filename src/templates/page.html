@@ -49,6 +49,18 @@
       .source-checkbox:checked + .source-label:hover {
         opacity: 0.8;
       }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      .cursor-blink {
+        animation: blink 1s step-end infinite;
+      }
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -66,7 +78,9 @@
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <h1 class="text-2xl font-bold tracking-tighter">
-              <a href="/" class="hover:bg-black hover:text-white px-1">N3RDFEED_</a>
+              <a href="/" class="bg-black text-white px-1"
+                >N3RDFEED<span class="cursor-blink">_</span></a
+              >
             </h1>
             <p class="text-[10px] text-gray-500 mt-1">> ML/AI News</p>
           </div>

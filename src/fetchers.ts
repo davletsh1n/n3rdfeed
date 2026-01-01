@@ -1,6 +1,6 @@
 import Replicate from 'replicate';
-import type { Post } from './types';
-import { hashStringToInt, truncateWithoutBreakingWords, base36ToInt } from './utils';
+import type { Post } from './types.js';
+import { hashStringToInt, truncateWithoutBreakingWords, base36ToInt } from './utils.js';
 
 export async function fetchReplicatePosts(): Promise<Post[]> {
   const replicate = new Replicate({ auth: process.env.REPLICATE_API_TOKEN });

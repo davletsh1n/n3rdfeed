@@ -1,14 +1,22 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Post } from './types';
+import type { Post } from './types.js';
 
 const BANNED_STRINGS = ['nft', 'crypto', 'telegram', 'clicker', 'solana', 'stealer'];
 
 function getClient(): SupabaseClient {
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
+  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!, {
+    auth: {
+      persistSession: false,
+    },
+  });
 }
 
 function getServiceRoleClient(): SupabaseClient {
-  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+  return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
+    auth: {
+      persistSession: false,
+    },
+  });
 }
 
 function isValidPost(post: Post): boolean {

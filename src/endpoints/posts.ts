@@ -1,7 +1,6 @@
 import { contentJson, OpenAPIRoute } from 'chanfana';
 import { z } from 'zod';
-import { AppContext } from '../types';
-import { posts, FilterType } from '../db';
+import { posts, FilterType } from '../db.js';
 
 const PostSchema = z.object({
   id: z.string(),

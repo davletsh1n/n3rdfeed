@@ -1,10 +1,10 @@
-import { posts } from './db';
+import { posts } from './db.js';
 import {
   fetchGitHubPosts,
   fetchHuggingFacePosts,
   fetchRedditPosts,
   fetchReplicatePosts,
-} from './fetchers';
+} from './fetchers.js';
 import type { Post } from './types';
 
 export async function updateContent(): Promise<void> {
