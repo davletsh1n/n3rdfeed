@@ -10,7 +10,7 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Post } from './types.js';
+import type { Post, LLMUsage } from './types.js';
 
 const BANNED_STRINGS = ['nft', 'crypto', 'telegram', 'clicker', 'solana', 'stealer'];
 
@@ -88,7 +88,9 @@ export const posts = {
         source: post.source,
         username: post.username,
         name: post.name,
+        name_ru: post.name_ru,
         description: post.description,
+        description_ru: post.description_ru,
         stars: post.stars,
         url: post.url,
         created_at: post.created_at,
@@ -98,9 +100,85 @@ export const posts = {
     if (error) throw new Error(`Database error upserting posts: ${error.message}`);
   },
 
+  /**
+   * Сохранение логов использования LLM
+   */
+  async logLLMUsage(usage: LLMUsage): Promise<void> {
+    const client = getServiceRoleClient();
+    const { error } = await client.from('llm_usage').insert({
+      model_id: usage.model_id,
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      total_cost: usage.total_cost,
+      post_id: usage.post_id,
+    });
+    if (error) console.error(`Error logging LLM usage: ${error.message}`);
+  },
+
+  /**
+   * Получение последних логов использования LLM
+   */
+  async getLLMLogs(limit: number = 10) {
+    const client = getClient();
+    const { data, error } = await client
+      .from('llm_usage')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(`Error fetching logs: ${error.message}`);
+    return data;
+  },
+
+  /**
+   * Получение статистики расходов
+   */
+  async getStats(days: number = 30) {
+    const client = getClient();
+    const { data, error } = await client.rpc('get_llm_stats', { days_limit: days });
+    if (error) throw new Error(`Error fetching stats: ${error.message}`);
+    return data;
+  },
+
+  /**
+   * Получение активной модели LLM из конфигурации
+   */
+  async getActiveModel(): Promise<string> {
+    const client = getClient();
+    const { data } = await client
+      .from('app_config')
+      .select('value')
+      .eq('key', 'active_llm_model')
+      .single();
+    return data?.value || 'openai/gpt-4o-mini';
+  },
+
+  /**
+   * Сохранение активной модели LLM в конфигурацию
+   */
+  async setActiveModel(modelId: string): Promise<void> {
+    const client = getServiceRoleClient();
+    const { error } = await client
+      .from('app_config')
+      .upsert({ key: 'active_llm_model', value: modelId }, { onConflict: 'key' });
+    if (error) throw new Error(`Error setting active model: ${error.message}`);
+  },
+
   async getLastUpdated(): Promise<string | null> {
     const client = getClient();
     const { data } = await client.rpc('repositories_last_modified');
     return data || null;
+  },
+
+  /**
+   * Проверка наличия ID постов в базе данных.
+   * Используется для исключения повторного перевода уже существующих записей.
+   */
+  async getExistingIds(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const client = getClient();
+    const { data, error } = await client.from('repositories').select('id').in('id', ids);
+
+    if (error) throw new Error(`Database error checking existing IDs: ${error.message}`);
+    return new Set((data || []).map((item) => item.id));
   },
 };

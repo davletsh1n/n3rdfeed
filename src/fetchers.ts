@@ -16,6 +16,7 @@ import {
   truncateWithoutBreakingWords,
   base36ToInt,
   sanitizeContent,
+  addExecutionLog,
 } from './utils.js';
 
 /**
@@ -50,7 +51,7 @@ export async function fetchReplicatePosts(): Promise<Post[]> {
     }
   }
 
-  console.log(`Fetched ${posts.length} replicate models`);
+  addExecutionLog(`Fetched ${posts.length} replicate models`);
   return posts;
 }
 
@@ -83,7 +84,7 @@ export async function fetchHuggingFacePosts(): Promise<Post[]> {
     });
   }
 
-  console.log(`Fetched ${posts.length} huggingface models`);
+  addExecutionLog(`Fetched ${posts.length} huggingface models`);
   return posts;
 }
 
@@ -144,7 +145,7 @@ export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
     }
   }
 
-  console.log(`Fetched ${posts.length} github repos`);
+  addExecutionLog(`Fetched ${posts.length} github repos`);
   return posts;
 }
 
@@ -198,6 +199,6 @@ export async function fetchRedditPosts(): Promise<Post[]> {
     }
   }
 
-  console.log(`Fetched ${posts.length} reddit posts`);
+  addExecutionLog(`Fetched ${posts.length} reddit posts`);
   return posts;
 }

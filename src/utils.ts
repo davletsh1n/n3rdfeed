@@ -8,6 +8,23 @@
  */
 
 /**
+ * Глобальный массив для временного хранения логов выполнения.
+ * Позволяет передавать сообщения из глубоких слоев логики (fetchers, scheduled) в API ответ.
+ */
+export const executionLogs: string[] = [];
+
+export function addExecutionLog(msg: string) {
+  const time = new Date().toLocaleTimeString();
+  const logMsg = `[${time}] ${msg}`;
+  console.log(logMsg); // Дублируем в терминал
+  executionLogs.push(logMsg);
+}
+
+export function clearExecutionLogs() {
+  executionLogs.length = 0;
+}
+
+/**
  * Функция для глубокой очистки текста от HTML-тегов, Markdown-разметки и лишних пробелов.
  * Важна для нормализации данных перед сохранением в БД.
  */
