@@ -5,7 +5,6 @@
 
 import { ApiException, fromHono } from 'chanfana';
 import { Hono } from 'hono';
-import { handle } from 'hono/vercel';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import Mustache from 'mustache';
 import { ListPosts, GetLastUpdated } from './endpoints/posts.js';
@@ -139,10 +138,6 @@ app.get('/admin', async (c) => {
       }),
     ]);
 
-    console.log('[Admin] Stats result:', stats);
-    console.log('[Admin] Logs result:', logs);
-    console.log('[Admin] Active model:', activeModel);
-    console.log('[Admin] Balance:', balance);
 
     const html = Mustache.render(ADMIN_TEMPLATE, {
       user,
@@ -211,6 +206,4 @@ const openapi = fromHono(app, { docs_url: '/docs' });
 openapi.get('/api/posts', ListPosts);
 openapi.get('/api/last-updated', GetLastUpdated);
 
-export const GET = handle(app);
-export const POST = handle(app);
 export default app;

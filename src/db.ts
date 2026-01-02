@@ -24,10 +24,28 @@ function getServiceRoleClient(): SupabaseClient {
   });
 }
 
+/**
+ * Алгоритм скоринга на основе популярности и времени (Gravity Score).
+ * Позволяет свежим постам подниматься выше старых, даже если у них меньше звезд.
+ * Формула: Score = BaseScore / (Hours + 2)^Gravity
+ */
 function scorePost(post: Post): number {
-  if (post.source === 'reddit') return post.stars * SCORING.REDDIT_MULTIPLIER;
-  if (post.source === 'replicate') return Math.pow(post.stars, SCORING.REPLICATE_POWER);
-  return post.stars;
+  // 1. Определяем базовый вес (нормализация разных источников)
+  let baseScore = post.stars;
+  if (post.source === 'reddit') baseScore = post.stars * 5; // 1 апвоут Reddit ~ 5 звезд GitHub
+  if (post.source === 'replicate') baseScore = post.stars * 0.5; // 1 запуск Replicate ~ 0.5 звезды
+
+  // 2. Считаем время в часах с момента создания
+  const createdDate = new Date(post.created_at);
+  const now = new Date();
+  const hoursAge = Math.max(0, (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60));
+
+  // 3. Применяем затухание (Gravity)
+  // Коэффициент 1.8 — стандарт для Hacker News, делает затухание довольно быстрым
+  const gravity = 1.8;
+  const finalScore = baseScore / Math.pow(hoursAge + 2, gravity);
+
+  return finalScore;
 }
 
 export type FilterType = 'past_day' | 'past_three_days' | 'past_week';
@@ -129,7 +147,6 @@ export const posts = {
       console.error(`[DB] Error fetching LLM logs:`, error);
       throw new Error(`Error fetching logs: ${error.message}`);
     }
-    console.log(`[DB] Fetched ${data?.length || 0} LLM logs`);
     return data;
   },
 
@@ -143,7 +160,6 @@ export const posts = {
       console.error(`[DB] Error fetching LLM stats:`, error);
       throw new Error(`Error fetching stats: ${error.message}`);
     }
-    console.log(`[DB] Fetched stats:`, data);
     return data;
   },
 

@@ -6,7 +6,7 @@ import {
   fetchReplicatePosts,
 } from './fetchers.js';
 import type { Post } from './types';
-import { translateBatch, generateTLDRBatch } from './services/llm.js';
+import { generateTLDRBatch } from './services/llm.js';
 import { addExecutionLog } from './utils.js';
 import { LIMITS, LLM_PROMPTS } from './config.js';
 
