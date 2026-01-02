@@ -29,11 +29,12 @@ function getServiceRoleClient(): SupabaseClient {
  * Позволяет свежим постам подниматься выше старых, даже если у них меньше звезд.
  * Формула: Score = BaseScore / (Hours + 2)^Gravity
  */
-function scorePost(post: Post): number {
+export function scorePost(post: Post): number {
   // 1. Определяем базовый вес (нормализация разных источников)
   let baseScore = post.stars;
   if (post.source === 'reddit') baseScore = post.stars * 5; // 1 апвоут Reddit ~ 5 звезд GitHub
   if (post.source === 'replicate') baseScore = post.stars * 0.5; // 1 запуск Replicate ~ 0.5 звезды
+  if (post.source === 'hackernews') baseScore = post.stars * 4; // 1 балл HN ~ 4 звезды GitHub
 
   // 2. Считаем время в часах с момента создания
   const createdDate = new Date(post.created_at);

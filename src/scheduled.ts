@@ -4,6 +4,7 @@ import {
   fetchHuggingFacePosts,
   fetchRedditPosts,
   fetchReplicatePosts,
+  fetchHackerNewsPosts,
 } from './fetchers.js';
 import type { Post } from './types';
 import { generateTLDRBatch } from './services/llm.js';
@@ -22,18 +23,21 @@ export async function updateContent(): Promise<void> {
   date.setDate(date.getDate() - 7);
   const lastWeekDate = date.toISOString().slice(0, 10);
 
-  const [huggingFacePosts, gitHubPosts, redditPosts, replicatePosts] = await Promise.all([
-    fetchHuggingFacePosts(),
-    fetchGitHubPosts(lastWeekDate),
-    fetchRedditPosts(),
-    fetchReplicatePosts(),
-  ]);
+  const [huggingFacePosts, gitHubPosts, redditPosts, replicatePosts, hackerNewsPosts] =
+    await Promise.all([
+      fetchHuggingFacePosts(),
+      fetchGitHubPosts(lastWeekDate),
+      fetchRedditPosts(),
+      fetchReplicatePosts(),
+      fetchHackerNewsPosts(),
+    ]);
 
   const allFetchedPosts: Post[] = [
     ...huggingFacePosts,
     ...gitHubPosts,
     ...redditPosts,
     ...replicatePosts,
+    ...hackerNewsPosts,
   ];
 
   // Сортируем по весу (рейтингу) перед обрезкой

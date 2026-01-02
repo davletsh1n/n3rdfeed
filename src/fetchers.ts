@@ -226,3 +226,91 @@ export async function fetchRedditPosts(): Promise<Post[]> {
   addExecutionLog(`Fetched ${posts.length} reddit posts`);
   return posts;
 }
+
+/**
+ * Сборщик популярных постов из Hacker News.
+ * Использует официальный Firebase API.
+ * Фильтрует посты по ключевым словам, связанным с AI/ML.
+ */
+export async function fetchHackerNewsPosts(): Promise<Post[]> {
+  const posts: Post[] = [];
+  const TOP_STORIES_URL = 'https://hacker-news.firebaseio.com/v0/topstories.json';
+  const ITEM_URL = (id: number) => `https://hacker-news.firebaseio.com/v0/item/${id}.json`;
+
+  // Темы, которые мы отсекаем для сохранения фокуса ленты
+  const HN_BLACKLIST = [
+    'politics',
+    'election',
+    'government',
+    'economy',
+    'inflation',
+    'lawsuit',
+    'court',
+    'health',
+    'medical',
+    'cancer',
+    'biology',
+    'climate',
+    'music',
+    'movie',
+    'film',
+    'book review',
+    'recipe',
+    'cooking',
+    'sport',
+    'football',
+    'basketball',
+    'war',
+    'military',
+  ];
+
+  try {
+    // 1. Получаем список ID топовых постов
+    const resp = await fetch(TOP_STORIES_URL);
+    const topIds = (await resp.json()) as number[];
+
+    // Берем первые 100 топовых историй
+    const idsToFetch = topIds.slice(0, 100);
+
+    // 2. Получаем детали для каждого поста параллельно
+    const itemPromises = idsToFetch.map((id) => fetch(ITEM_URL(id)).then((r) => r.json()));
+    const items = await Promise.all(itemPromises);
+
+    for (const item of items) {
+      // Согласно HN_API.md, проверяем тип и флаги dead/deleted
+      if (
+        !item ||
+        item.type !== 'story' ||
+        item.dead ||
+        item.deleted ||
+        !item.url ||
+        !item.title
+      ) {
+        continue;
+      }
+
+      // Тематическая фильтрация (Blacklist)
+      const titleLower = item.title.toLowerCase();
+      const isBlacklisted = HN_BLACKLIST.some((word) => titleLower.includes(word));
+      if (isBlacklisted) continue;
+
+      // Добавляем историю
+      posts.push({
+        id: `hn_${item.id}`,
+        source: 'hackernews',
+        username: item.by,
+        name: sanitizeContent(item.title),
+        stars: item.score,
+        description: new URL(item.url).hostname,
+        url: item.url,
+        created_at: new Date(item.time * 1000).toISOString(),
+      });
+    }
+  } catch (err) {
+    console.error('[HackerNews] Fetch error:', err);
+    addExecutionLog(`[HackerNews] Error: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  addExecutionLog(`Fetched ${posts.length} Hacker News posts`);
+  return posts;
+}

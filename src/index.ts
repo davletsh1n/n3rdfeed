@@ -9,10 +9,10 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import Mustache from 'mustache';
 import { ListPosts, GetLastUpdated } from './endpoints/posts.js';
 import { updateContent } from './scheduled.js';
-import { posts, FilterType } from './db.js';
+import { posts, FilterType, scorePost } from './db.js';
 import type { Post } from './types';
 import { MODEL_RATES, getOpenRouterBalance } from './services/llm.js';
-import { executionLogs, clearExecutionLogs } from './utils.js';
+import { executionLogs, clearExecutionLogs, timeSince } from './utils.js';
 import { PAGE_TEMPLATE, ADMIN_TEMPLATE } from './templates.js';
 import { SOURCES, AUTH, SOURCE_ICONS, validateConfig, logConfig } from './config.js';
 import type { LLMStatsRow, LLMLogRow, AdminStats, AdminLog, AdminModel } from './types/api.js';
@@ -36,6 +36,10 @@ function preparePostData(post: Post, index: number) {
   const tldr = post.tldr_ru || '';
   const hasTLDR = !!post.tldr_ru;
 
+  // Рассчитываем sc0re и время
+  const score = scorePost(post);
+  const timeAgo = timeSince(new Date(post.created_at));
+
   return {
     index: index + 1,
     displayName,
@@ -45,6 +49,8 @@ function preparePostData(post: Post, index: number) {
     hasTLDR,
     url: post.url,
     stars: post.stars,
+    score: score.toFixed(1),
+    timeAgo: `${timeAgo.toUpperCase()} AGO`,
   };
 }
 

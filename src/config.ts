@@ -17,7 +17,7 @@ if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
 /**
  * Источники новостей
  */
-export const SOURCES = ['GitHub', 'Replicate', 'HuggingFace', 'Reddit'] as const;
+export const SOURCES = ['GitHub', 'Replicate', 'HuggingFace', 'Reddit', 'HackerNews'] as const;
 
 export type Source = (typeof SOURCES)[number];
 
@@ -173,6 +173,7 @@ export const SOURCE_ICONS: Record<string, string> = {
   reddit: '👽',
   replicate: '®️',
   github: '⭐',
+  hackernews: '🧡',
 } as const;
 
 /**

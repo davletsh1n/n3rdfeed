@@ -37,7 +37,7 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
             <h1 class="text-2xl font-bold tracking-tighter">
               <a href="/" class="bg-black text-white px-1">N3RDFEED<span class="cursor-blink">_</span></a>
             </h1>
-            <p class="text-[10px] text-gray-500 mt-1">> ML/AI News</p>
+            <p class="text-[10px] text-gray-500 mt-1">> ML/AI & HACKER NEWS</p>
           </div>
           <nav class="flex flex-wrap gap-2 text-sm">
             {{#filterLinks}}
@@ -60,7 +60,7 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
       <main class="terminal-border overflow-hidden">
         <div class="bg-black text-white px-4 py-1 text-[10px] font-bold flex justify-between uppercase tracking-widest">
           <span>NAME / DESCRIPTION</span>
-          <span class="hidden md:inline">METRICS</span>
+          <span class="hidden md:inline">SC0RE</span>
         </div>
         <ul class="divide-y divide-black">
           {{#posts}}
@@ -81,8 +81,9 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
                 {{/hasTLDR}}
               </div>
               <div class="text-right flex flex-col items-end gap-1 shrink-0">
-                <span class="text-sm font-bold">{{stars}}</span>
-                <span class="text-[9px] bg-black text-white px-1 font-bold">STARS</span>
+                <span class="text-sm font-bold">{{score}}</span>
+                <span class="text-[9px] bg-black text-white px-1 font-bold">SC0RE</span>
+                <span class="text-[8px] text-gray-400 mt-1 whitespace-nowrap">{{timeAgo}}</span>
               </div>
             </div>
           </li>
