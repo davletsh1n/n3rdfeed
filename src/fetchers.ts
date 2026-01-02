@@ -123,24 +123,63 @@ export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
 }
 
 /**
+ * Получение токена доступа Reddit через OAuth2.
+ */
+async function getRedditAccessToken(): Promise<string | null> {
+  if (!API_KEYS.REDDIT_CLIENT_ID || !API_KEYS.REDDIT_CLIENT_SECRET) {
+    addExecutionLog('[Reddit] Missing API keys, skipping OAuth');
+    return null;
+  }
+
+  try {
+    const auth = Buffer.from(
+      `${API_KEYS.REDDIT_CLIENT_ID}:${API_KEYS.REDDIT_CLIENT_SECRET}`,
+    ).toString('base64');
+    const resp = await fetch('https://www.reddit.com/api/v1/access_token', {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'n3rdfeed-aggregator/1.0',
+      },
+      body: 'grant_type=client_credentials',
+    });
+
+    if (!resp.ok) throw new Error(`Auth failed: ${resp.status}`);
+    const data = (await resp.json()) as { access_token: string };
+    return data.access_token;
+  } catch (err) {
+    addExecutionLog(`[Reddit] Auth error: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
  * Сборщик популярных постов из тематических сабреддитов.
  */
 export async function fetchRedditPosts(): Promise<Post[]> {
   const posts: Post[] = [];
+  const accessToken = await getRedditAccessToken();
 
   for (const subreddit of REDDIT_SUBREDDITS) {
     try {
-      const url = `https://www.reddit.com/r/${subreddit}/top.json?t=week&limit=${LIMITS.REDDIT_LIMIT}`;
-      const resp = await fetch(url, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          Accept: 'application/json',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-        },
-      });
+      // Используем oauth.reddit.com если есть токен, иначе обычный www.reddit.com
+      const baseUrl = accessToken ? 'https://oauth.reddit.com' : 'https://www.reddit.com';
+      const url = `${baseUrl}/r/${subreddit}/top.json?t=week&limit=${LIMITS.REDDIT_LIMIT}`;
+
+      const headers: Record<string, string> = {
+        'User-Agent': 'n3rdfeed-aggregator/1.0 (by /u/davletsh1n)',
+      };
+
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      } else {
+        // Fallback заголовки для неавторизованных запросов
+        headers['Accept'] = 'application/json';
+        headers['Accept-Language'] = 'en-US,en;q=0.9';
+      }
+
+      const resp = await fetch(url, { headers });
 
       if (!resp.ok) {
         const errorText = await resp.text().catch(() => 'No body');

@@ -89,8 +89,16 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
           {{/posts}}
         </ul>
       </main>
-      <footer class="mt-4 p-4 text-center text-[10px] text-gray-400 uppercase tracking-widest">
-        <p>© 2025 N3RDFEED SYSTEM - NO RIGHTS RESERVED</p>
+      <footer class="mt-8 p-4 text-center space-y-4">
+        <p class="text-[10px] text-gray-400 uppercase tracking-widest">
+          © 2026 N3RDFEED. ALL RIGHTS RESERVED 
+          <a href="https://t.me/davletsh1n" target="_blank" class="ml-2 text-blue-400 hover:text-blue-300 transition-colors">CONTACT ME</a>
+        </p>
+        <div class="max-w-2xl mx-auto">
+          <p class="text-[8px] text-gray-300 leading-relaxed text-justify md:text-center">
+            N3RDFEED is an independent, non-commercial content aggregator. We display links and limited metadata from third‑party platforms (GitHub, Hugging Face, Replicate, and Reddit) for discovery purposes and always link to the original source. N3RDFEED is not affiliated with or endorsed by GitHub, Hugging Face, Replicate, or Reddit.
+          </p>
+        </div>
       </footer>
     </div>
     <script>

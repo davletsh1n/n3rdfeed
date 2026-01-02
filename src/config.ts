@@ -99,6 +99,8 @@ export const SUPABASE = {
 export const API_KEYS = {
   OPENROUTER: process.env.OPENROUTER_API_KEY || '',
   REPLICATE: process.env.REPLICATE_API_TOKEN || '',
+  REDDIT_CLIENT_ID: process.env.REDDIT_CLIENT_ID || '',
+  REDDIT_CLIENT_SECRET: process.env.REDDIT_CLIENT_SECRET || '',
 } as const;
 
 /**
