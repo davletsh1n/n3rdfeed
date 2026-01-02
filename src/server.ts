@@ -4,10 +4,24 @@ import app from './index';
 
 config();
 
-const port = 3000;
-console.log(`Server is running on http://localhost:${port}`);
+const port = Number(process.env.PORT) || 3000;
 
-serve({
-  fetch: app.fetch,
-  port,
-});
+try {
+  console.log(`[Server] Starting server on http://0.0.0.0:${port}`);
+  
+  const server = serve({
+    fetch: app.fetch,
+    port,
+    hostname: '0.0.0.0',
+  }, (info) => {
+    console.log(`[Server] Listening on http://${info.address}:${info.port}`);
+  });
+
+  server.on('error', (err) => {
+    console.error('[Server] Server error:', err);
+  });
+
+} catch (err) {
+  console.error('[Server] Failed to start server:', err);
+  process.exit(1);
+}

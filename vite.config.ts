@@ -14,7 +14,7 @@ export default defineConfig({
     outDir: 'dist',
     ssr: true, // Важно для корректной сборки серверной части
     rollupOptions: {
-      input: 'src/index.ts',
+      input: 'src/server.ts',
     },
   },
 });
