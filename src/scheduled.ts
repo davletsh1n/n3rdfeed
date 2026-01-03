@@ -54,6 +54,17 @@ export async function updateContent(): Promise<void> {
   // 1. Фильтруем дубликаты на входе: оставляем только те посты, которых НЕТ в базе данных
   const existingIds = await posts.getExistingIds(limitedPosts.map((p) => p.id));
   const newPosts = limitedPosts.filter((p) => !existingIds.has(p.id));
+  const existingPosts = limitedPosts.filter((p) => existingIds.has(p.id));
+
+  // Обновляем метрики для существующих постов
+  if (existingPosts.length > 0) {
+    addExecutionLog(`Updating metrics for ${existingPosts.length} existing posts...`);
+    try {
+      await posts.upsertMany(existingPosts);
+    } catch (err) {
+      addExecutionLog(`Error updating existing posts: ${err}`);
+    }
+  }
 
   addExecutionLog(`New unique posts identified: ${newPosts.length}`);
 

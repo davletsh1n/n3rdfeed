@@ -78,8 +78,32 @@ app.get('/', async (c) => {
   // If cache is empty, we try to load from DB once to avoid empty screen on first visit
   if (!cachedData) {
     console.log(`[Cache] Global miss, performing emergency sync build...`);
-    await rebuildFeed();
-    cachedData = feedCache.get();
+    
+    // Запускаем сборку в фоне, не блокируя ответ
+    rebuildFeed().catch(err => console.error('Emergency rebuild failed:', err));
+    
+    // Возвращаем страницу загрузки с авто-обновлением
+    return c.html(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>N3RDFEED - Initializing...</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+          <meta http-equiv="refresh" content="2">
+          <style>
+            @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+            .cursor-blink { animation: blink 1s step-end infinite; }
+          </style>
+        </head>
+        <body class="bg-white flex items-center justify-center h-screen font-mono">
+          <div class="text-center">
+            <h1 class="text-2xl font-bold mb-2 tracking-tighter">N3RDFEED<span class="cursor-blink">_</span></h1>
+            <p class="text-xs text-gray-500 uppercase tracking-widest mb-4">Initializing feed cache...</p>
+            <div class="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin mx-auto"></div>
+          </div>
+        </body>
+      </html>
+    `);
   }
 
   const lastUpdatedTimestamp = cachedData ? cachedData.lastUpdated : Date.now();

@@ -6,24 +6,11 @@
 import { posts } from './db.js';
 import { feedCache } from './cache.js';
 import { updateContent } from './scheduled.js';
-import { addExecutionLog } from './utils.js';
+import { addExecutionLog, normalizeUrl } from './utils.js';
 import { SOURCES } from './config.js';
 
 const REBUILD_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const INGESTION_INTERVAL = 60 * 60 * 1000; // 1 hour
-
-/**
- * Нормализация URL для сравнения.
- * Убирает протоколы, завершающие слеши и www.
- */
-function normalizeUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.hostname.replace('www.', '') + u.pathname.replace(/\/$/, '');
-  } catch {
-    return url.replace(/^https?:\/\//, '').replace('www.', '').replace(/\/$/, '');
-  }
-}
 
 export async function rebuildFeed() {
   addExecutionLog('Background feed rebuild started');
@@ -40,14 +27,6 @@ export async function rebuildFeed() {
       const sourceTypes = new Set<string>();
       allPostsInCluster.forEach((p: any) => sourceTypes.add(p.source.toLowerCase()));
       
-      // ДОПОЛНИТЕЛЬНО: Проверяем URL на совпадение, если кластеризация по эмбеддингам промахнулась
-      // Это важно для HN + GitHub, так как у HN может не быть эмбеддинга или он слабый
-      const mainUrlNorm = normalizeUrl(mainPost.url);
-      
-      // Ищем среди всех постов те, что ведут на тот же URL, но не попали в кластер
-      // (Это упрощенная доп. кластеризация по URL)
-      // Но так как queryClustered уже вернул кластеры, мы просто убеждаемся, что uniqueSources собраны верно
-      
       // 2. Synergy Boost
       const uniqueSourcesCount = sourceTypes.size;
       let multiplier = 1.0;
@@ -63,6 +42,52 @@ export async function rebuildFeed() {
       const bestPost = githubPost || hfPost || mainPost;
       const bestLink = bestPost.url;
 
+      // FIX: Добавляем иконки репозиториев, если ссылка ведет на них, даже если источника нет в кластере
+      if (bestLink.includes('github.com')) sourceTypes.add('github');
+      if (bestLink.includes('huggingface.co')) sourceTypes.add('huggingface');
+      if (bestLink.includes('replicate.com')) sourceTypes.add('replicate');
+
+      // FIX: Улучшенное определение displayName для ссылок на репозитории
+      let displayName = bestPost.name;
+      const isRepoSource = ['github', 'huggingface', 'replicate'].includes(bestPost.source.toLowerCase());
+      
+      if (isRepoSource) {
+        displayName = `${bestPost.username}/${bestPost.name}`;
+      } else {
+        // Пытаемся извлечь owner/repo из URL для HN/Reddit постов
+        try {
+          const urlObj = new URL(bestLink);
+          if (urlObj.hostname.includes('github.com') || urlObj.hostname.includes('huggingface.co')) {
+             const parts = urlObj.pathname.split('/').filter(Boolean);
+             if (parts.length >= 2) {
+               displayName = `${parts[0]}/${parts[1]}`;
+             }
+          }
+        } catch {}
+      }
+
+      // 4. Spotted Links Generation
+      const spottedLinksMap = new Map<string, string>();
+      allPostsInCluster.forEach((p: any) => {
+        const source = p.source.toLowerCase();
+        let url = p.url;
+        
+        // Восстанавливаем ссылки на обсуждения
+        if (source === 'hackernews' && p.id.startsWith('hn_')) {
+           url = `https://news.ycombinator.com/item?id=${p.id.replace('hn_', '')}`;
+        }
+        
+        if (!spottedLinksMap.has(source)) {
+           spottedLinksMap.set(source, url);
+        }
+      });
+
+      const spottedLinks = Array.from(spottedLinksMap.entries()).map(([name, url], idx, arr) => ({
+        name: name === 'hackernews' ? 'Hacker News' : name.charAt(0).toUpperCase() + name.slice(1),
+        url,
+        last: idx === arr.length - 1
+      }));
+
       return {
         ...cluster,
         boostedScore,
@@ -71,18 +96,17 @@ export async function rebuildFeed() {
         createdAt: new Date(mainPost.created_at).getTime(),
         sourcesInCluster: Array.from(sourceTypes),
         prepareData: {
-          displayName: bestPost.source.toLowerCase() === 'github' || bestPost.source.toLowerCase() === 'huggingface' || bestPost.source.toLowerCase() === 'replicate' 
-            ? `${bestPost.username}/${bestPost.name}` 
-            : bestPost.name,
+          displayName,
           tldr: mainPost.tldr_ru || '',
           hasTLDR: !!mainPost.tldr_ru,
           url: bestLink,
           stars: mainPost.stars,
           score: boostedScore.toFixed(1),
-          originalDescription: mainPost.source.toLowerCase() === 'github' || mainPost.source.toLowerCase() === 'huggingface' || mainPost.source.toLowerCase() === 'replicate'
+          originalDescription: isRepoSource
             ? mainPost.description || ''
             : `${mainPost.username} on ${mainPost.description}`,
-          sourceTypes: Array.from(sourceTypes)
+          sourceTypes: Array.from(sourceTypes),
+          spottedLinks
         }
       };
     });

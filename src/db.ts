@@ -7,6 +7,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Post, LLMUsage } from './types.js';
 import { SUPABASE, LIMITS, SCORING } from './config.js';
 import { isValidPost } from './validators.js';
+import { normalizeUrl } from './utils.js';
 
 function getClient(): SupabaseClient {
   return createClient(SUPABASE.URL, SUPABASE.ANON_KEY, {
@@ -50,7 +51,16 @@ export function scorePost(post: Post): number {
 
   // Специальная логика для Hacker News (Учет дискуссий)
   if (post.source === 'hackernews') {
-    const comments = Number((post as any).comments_count) || 0;
+    let comments = Number((post as any).comments_count) || 0;
+
+    // Если comments_count нет (пост из БД), пытаемся достать из description
+    if (comments === 0 && post.description) {
+      const match = post.description.match(/\|\s*(\d+)\s*comments/);
+      if (match) {
+        comments = Number(match[1]);
+      }
+    }
+
     points = points + Math.log10(comments + 1) * 2;
   }
 
@@ -129,13 +139,15 @@ export const posts = {
     const ids = posts.map((p) => p.id);
     const { data: existingItems } = await client
       .from('repositories')
-      .select('id, metrics_history')
+      .select('id, metrics_history, tldr_ru, embedding')
       .in('id', ids);
 
     const historyMap = new Map(existingItems?.map((i) => [i.id, i.metrics_history || []]) || []);
+    const existingDataMap = new Map(existingItems?.map((i) => [i.id, i]) || []);
 
     const dataToUpsert = posts.map((post) => {
       const currentHistory = historyMap.get(post.id) || [];
+      const existingData = existingDataMap.get(post.id);
       const newEntry = { ts: Date.now(), score: post.stars };
 
       // Ограничиваем историю последними 100 записями, чтобы JSON не раздувался
@@ -147,12 +159,12 @@ export const posts = {
         username: post.username,
         name: post.name,
         description: post.description,
-        tldr_ru: post.tldr_ru || null,
+        tldr_ru: post.tldr_ru || existingData?.tldr_ru || null,
         stars: post.stars,
         url: post.url,
         created_at: post.created_at,
         metrics_history: updatedHistory,
-        embedding: post.embedding || null,
+        embedding: post.embedding || existingData?.embedding || null,
       };
     });
 
@@ -346,22 +358,27 @@ export const posts = {
 
       processedIds.add(post.id);
 
-      // Если у поста нет эмбеддинга, он сам по себе кластер
-      if (!post.embedding) {
-        clusters.push(cluster);
-        continue;
-      }
-
       // 3. Ищем похожие посты среди ОСТАЛЬНЫХ (уже загруженных)
       // Мы не делаем запрос к БД для каждого поста, а сравниваем в памяти для скорости
       for (const otherPost of allPosts) {
-        if (processedIds.has(otherPost.id) || !otherPost.embedding) continue;
+        if (processedIds.has(otherPost.id)) continue;
 
-        // Считаем косинусное сходство
-        const similarity = cosineSimilarity(post.embedding, otherPost.embedding);
+        let isRelated = false;
 
-        // Порог сходства 0.85 (согласно ТЗ)
-        if (similarity > 0.85) {
+        // Проверка по эмбеддингам
+        if (post.embedding && otherPost.embedding) {
+          const similarity = cosineSimilarity(post.embedding, otherPost.embedding);
+          if (similarity > 0.85) isRelated = true;
+        }
+
+        // Проверка по URL (если эмбеддинги не сработали или их нет)
+        if (!isRelated && post.url && otherPost.url) {
+          if (normalizeUrl(post.url) === normalizeUrl(otherPost.url)) {
+            isRelated = true;
+          }
+        }
+
+        if (isRelated) {
           cluster.relatedPosts.push(otherPost);
           cluster.totalScore += scorePost(otherPost) * 0.2; // Бонус за дублирование в разных источниках
           processedIds.add(otherPost.id);

@@ -113,6 +113,27 @@ export function cosineSimilarity(vecA: number[], vecB: number[]): number {
 }
 
 /**
+ * Нормализация URL для сравнения.
+ * Убирает протоколы, завершающие слеши и www.
+ */
+export function normalizeUrl(url: string): string {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    // Приводим к нижнему регистру, убираем .git и завершающие слеши
+    const path = u.pathname.replace(/\/$/, '').replace(/\.git$/, '').toLowerCase();
+    return u.hostname.replace('www.', '').toLowerCase() + path;
+  } catch {
+    return url
+      .replace(/^https?:\/\//, '')
+      .replace('www.', '')
+      .replace(/\/$/, '')
+      .replace(/\.git$/, '')
+      .toLowerCase();
+  }
+}
+
+/**
  * Категории для Diversity Filter
  */
 export type ContentCategory = 'NLP' | 'CV' | 'Audio' | 'Systems' | 'General';

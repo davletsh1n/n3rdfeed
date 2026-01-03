@@ -83,6 +83,12 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
                   <p class="text-sm text-gray-800 leading-tight font-medium">{{tldr}}</p>
                 </div>
                 {{/hasTLDR}}
+                <div class="text-[10px] text-gray-400 mt-2">
+                  Spotted on: 
+                  {{#spottedLinks}}
+                    <a href="{{url}}" target="_blank" class="hover:underline">{{name}}</a>{{^last}}, {{/last}}
+                  {{/spottedLinks}}
+                </div>
               </div>
               <div class="text-right flex flex-col items-end gap-1 shrink-0">
                 <span class="text-sm font-bold">{{score}}</span>
