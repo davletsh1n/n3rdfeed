@@ -70,7 +70,11 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
                 <div class="flex items-center gap-2 mb-1">
                   <span class="text-gray-400 text-xs">{{index}}.</span>
                   <a href="{{url}}" target="_blank" rel="noopener noreferrer" class="font-bold hover:underline block">{{displayName}}</a>
-                  <span class="text-[10px] px-1 border border-gray-300 text-gray-500">{{icon}}</span>
+                  <div class="flex gap-1">
+                    {{#sources}}
+                    <span class="text-[10px] px-1 border border-gray-300 text-gray-500">{{icon}}</span>
+                    {{/sources}}
+                  </div>
                 </div>
                 <p class="text-sm text-gray-500 leading-tight mt-1">{{originalDescription}}</p>
                 {{#hasTLDR}}

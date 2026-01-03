@@ -1,8 +1,12 @@
 import { serve } from '@hono/node-server';
 import { config } from 'dotenv';
 import app from './index';
+import { startWorker } from './worker.js';
 
 config();
+
+// Start background worker
+startWorker();
 
 const port = Number(process.env.PORT) || 3000;
 

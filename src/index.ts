@@ -26,6 +26,8 @@ import {
 import { PAGE_TEMPLATE, ADMIN_TEMPLATE } from './templates.js';
 import { SOURCES, AUTH, SOURCE_ICONS, validateConfig, logConfig } from './config.js';
 import type { LLMStatsRow, LLMLogRow, AdminStats, AdminLog, AdminModel } from './types/api.js';
+import { feedCache } from './cache.js';
+import { rebuildFeed } from './worker.js';
 
 const ALL_SOURCES = [...SOURCES];
 
@@ -69,26 +71,56 @@ const app = new Hono();
 app.get('/', async (c) => {
   const filter = (c.req.query('filter') || 'past_week') as FilterType;
   const sourcesParam = c.req.query('sources') || SOURCES.join(',');
-  const sources = sourcesParam.split(',');
+  const selectedSources = sourcesParam.split(',').map((s) => s.toLowerCase());
 
-  const [postList, lastUpdatedRaw] = await Promise.all([
-    posts.query({ filter, sources }),
-    posts.getLastUpdated(),
-  ]);
+  let cachedData = feedCache.get();
 
-  const lastUpdatedTimestamp = lastUpdatedRaw ? new Date(lastUpdatedRaw).getTime() : null;
+  // If cache is empty, we try to load from DB once to avoid empty screen on first visit
+  if (!cachedData) {
+    console.log(`[Cache] Global miss, performing emergency sync build...`);
+    await rebuildFeed();
+    cachedData = feedCache.get();
+  }
+
+  const lastUpdatedTimestamp = cachedData ? cachedData.lastUpdated : Date.now();
+  
+  // Filter in memory
+  const now = Date.now();
+  let timeLimit = now - 7 * 24 * 60 * 60 * 1000; // Default past_week
+  if (filter === 'past_day') timeLimit = now - 24 * 60 * 60 * 1000;
+  else if (filter === 'past_three_days') timeLimit = now - 3 * 24 * 60 * 60 * 1000;
+
+  const filteredClusters = (cachedData?.clusters || []).filter((cluster: any) => {
+    // 1. Time filter
+    if (cluster.createdAt < timeLimit) return false;
+
+    // 2. Source filter: at least one source in cluster must be in selectedSources
+    return cluster.sourcesInCluster.some((s: string) => selectedSources.includes(s));
+  });
+
+  // Prepare for Mustache
+  const postsToRender = filteredClusters.map((cluster: any, index: number) => {
+    return {
+      ...cluster.prepareData,
+      index: index + 1,
+      timeAgo: timeSince(new Date(cluster.createdAt)).toUpperCase() + ' AGO',
+      sources: cluster.prepareData.sourceTypes.map((s: string) => ({ 
+        icon: SOURCE_ICONS[s] || SOURCE_ICONS.github 
+      }))
+    };
+  });
 
   const html = Mustache.render(PAGE_TEMPLATE, {
     filter: filter || 'past_week',
-    sourcesParam: sources.join(','),
+    sourcesParam: sourcesParam,
     lastUpdatedTimestamp,
-    posts: postList.map(preparePostData),
+    posts: postsToRender,
     filterLinks: [
       { key: 'past_day', label: 'Past day' },
       { key: 'past_three_days', label: 'Past three days' },
       { key: 'past_week', label: 'Past week' },
     ].map((f) => ({ ...f, active: filter === f.key || (!filter && f.key === 'past_week') })),
-    sources: ALL_SOURCES.map((name) => ({ name, checked: sources.includes(name) })),
+    sources: ALL_SOURCES.map((name) => ({ name, checked: selectedSources.includes(name.toLowerCase()) })),
   });
 
   return c.html(html);
