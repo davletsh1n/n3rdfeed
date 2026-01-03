@@ -96,3 +96,83 @@ export function base36ToInt(str: string): string {
   }
   return result.toString();
 }
+
+/**
+ * Вспомогательная функция для расчета косинусного сходства векторов
+ */
+export function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Категории для Diversity Filter
+ */
+export type ContentCategory = 'NLP' | 'CV' | 'Audio' | 'Systems' | 'General';
+
+/**
+ * Определяет категорию поста на основе его метаданных и текста.
+ */
+export function categorizePost(post: any): ContentCategory {
+  const text = `${post.name} ${post.description} ${post.tldr_ru || ''}`.toLowerCase();
+
+  // 1. Systems & Infrastructure
+  if (
+    text.includes('inference') ||
+    text.includes('cuda') ||
+    text.includes('quantization') ||
+    text.includes('gguf') ||
+    text.includes('rust') ||
+    text.includes('cpp') ||
+    text.includes('engine') ||
+    text.includes('optimization')
+  ) {
+    return 'Systems';
+  }
+
+  // 2. Computer Vision
+  if (
+    text.includes('image') ||
+    text.includes('video') ||
+    text.includes('diffusion') ||
+    text.includes('vision') ||
+    text.includes('segmentation') ||
+    text.includes('detection')
+  ) {
+    return 'CV';
+  }
+
+  // 3. Audio & Speech
+  if (
+    text.includes('audio') ||
+    text.includes('speech') ||
+    text.includes('voice') ||
+    text.includes('tts') ||
+    text.includes('stt') ||
+    text.includes('music')
+  ) {
+    return 'Audio';
+  }
+
+  // 4. NLP (Default for most AI stuff)
+  if (
+    text.includes('llm') ||
+    text.includes('gpt') ||
+    text.includes('text') ||
+    text.includes('language') ||
+    text.includes('rag') ||
+    text.includes('agent') ||
+    text.includes('chat')
+  ) {
+    return 'NLP';
+  }
+
+  return 'General';
+}

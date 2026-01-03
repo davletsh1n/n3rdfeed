@@ -126,21 +126,43 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
       }
       updateLastUpdated();
       setInterval(updateLastUpdated, 1000);
-      function getSelectedSources() { return [...document.querySelectorAll('[data-source]:checked')].map(c => c.dataset.source); }
-      function buildUrl(filter, sources) { return '/?filter=' + filter + '&sources=' + sources.join(','); }
+      function getSelectedSources() { 
+        const checked = [...document.querySelectorAll('[data-source]:checked')].map(c => c.dataset.source);
+        // Если ничего не выбрано, возвращаем пустой массив (но сервер подставит дефолт при загрузке страницы)
+        return checked;
+      }
+      function buildUrl(filter, sources) { 
+        // Если выбраны все источники, можно не передавать их в URL для чистоты, 
+        // но для надежности JS логики передаем всегда
+        return '/?filter=' + filter + '&sources=' + sources.join(','); 
+      }
       async function navigate(url) {
+        // Визуально скрываем контент при загрузке
+        document.querySelector('main').style.opacity = '0.5';
         document.querySelectorAll('[data-source]').forEach(cb => { cb.disabled = true; });
+        
         history.pushState(null, '', url);
         const res = await fetch(url);
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
+        
         document.querySelector('.container').innerHTML = doc.querySelector('.container').innerHTML;
         attachListeners();
         updateLastUpdated();
       }
       function attachListeners() {
-        document.querySelectorAll('[data-source]').forEach(cb => { cb.addEventListener('change', () => { navigate(buildUrl(currentFilter, getSelectedSources())); }); });
-        document.querySelectorAll('[data-navigate]').forEach(a => { a.addEventListener('click', (e) => { e.preventDefault(); navigate(a.href); }); });
+        document.querySelectorAll('[data-source]').forEach(cb => { 
+          cb.addEventListener('change', () => { 
+            const selected = getSelectedSources();
+            navigate(buildUrl(currentFilter, selected)); 
+          }); 
+        });
+        document.querySelectorAll('[data-navigate]').forEach(a => { 
+          a.addEventListener('click', (e) => { 
+            e.preventDefault(); 
+            navigate(a.href); 
+          }); 
+        });
       }
       window.addEventListener('popstate', () => navigate(location.href));
       attachListeners();
@@ -158,6 +180,7 @@ export const ADMIN_TEMPLATE = `<div class="max-w-4xl mx-auto space-y-8">
       <div id="statusIndicator" class="hidden items-center gap-2 text-xs font-bold text-blue-600 animate-pulse">
         <span class="w-2 h-2 bg-blue-600 rounded-full"></span> PROCESSING...
       </div>
+      <a href="/admin/digest" target="_blank" class="bg-blue-600 text-white px-4 py-2 hover:bg-blue-700 transition-all uppercase font-bold text-xs">Generate AI Digest</a>
       <button onclick="updateContent()" id="updateBtn" class="bg-black text-white px-4 py-2 hover:bg-gray-800 transition-all uppercase font-bold text-xs">Run Manual Update</button>
       <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 hover:bg-red-600 transition-all uppercase font-bold text-xs">Logout</button>
     </div>

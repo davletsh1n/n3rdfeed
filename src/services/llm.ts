@@ -7,6 +7,7 @@ import { LLMUsage } from '../types.js';
 import { API_KEYS, LLM_PROMPTS } from '../config.js';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
 
 /**
  * Тарифы моделей (цена за 1 млн токенов в USD)
@@ -57,7 +58,6 @@ export async function getOpenRouterBalance(): Promise<number> {
   }
 }
 
-
 /**
  * Вспомогательная функция для расчета примерной стоимости.
  * В идеале OpenRouter отдает это сам, но для надежности считаем по тарифам.
@@ -97,8 +97,9 @@ export async function generateTLDRBatch(
 
   const systemPrompt = `${LLM_PROMPTS.TLDR_GENERATOR}
 
-ОТВЕТЬ СТРОГО В ФОРМАТЕ JSON: {"results": [{"id": "...", "tldr": "..."}]}.
-Сохраняй оригинальные ID.`;
+IMPORTANT: You must output valid JSON only.
+FORMAT: {"results": [{"id": "...", "tldr": "..."}]}.
+Keep original IDs.`;
 
   const response = await fetch(OPENROUTER_API_URL, {
     method: 'POST',
@@ -114,6 +115,7 @@ export async function generateTLDRBatch(
         { role: 'user', content: JSON.stringify({ items }) },
       ],
       response_format: { type: 'json_object' },
+      max_tokens: 4096, // Увеличиваем лимит на выход, чтобы избежать обрывов JSON
       temperature: 0.1, // Минимальная температура - только факты, без креатива
     }),
   });
@@ -163,4 +165,145 @@ export async function generateTLDRBatch(
   };
 
   return { tldrs, usage };
+}
+
+/**
+ * Генерация векторных эмбеддингов для текстов.
+ * Использует модель openai/text-embedding-3-small через OpenRouter.
+ *
+ * @param texts - Массив строк для векторизации
+ * @returns Массив векторов (каждый вектор - массив чисел)
+ */
+export async function generateEmbeddingsBatch(
+  texts: string[],
+): Promise<{ embeddings: number[][]; usage: LLMUsage }> {
+  if (texts.length === 0) {
+    return {
+      embeddings: [],
+      usage: {
+        model_id: 'mistralai/mistral-embed-2312',
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_cost: 0,
+      },
+    };
+  }
+
+  if (!API_KEYS.OPENROUTER) {
+    throw new Error('OPENROUTER_API_KEY is not defined');
+  }
+
+  const model = 'mistralai/mistral-embed-2312';
+
+  console.log(`[LLM] Generating embeddings for ${texts.length} items using ${model}...`);
+
+  const response = await fetch(OPENROUTER_EMBEDDINGS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${API_KEYS.OPENROUTER}`,
+      'HTTP-Referer': 'https://github.com/n3rdfeed',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: model,
+      input: texts,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`OpenRouter Embedding error: ${JSON.stringify(error)}`);
+  }
+
+  const data = await response.json();
+
+  if (!data.data || !Array.isArray(data.data)) {
+    console.error('[LLM] Unexpected embedding response format:', JSON.stringify(data));
+    throw new Error('Invalid embedding response from OpenRouter');
+  }
+
+  // OpenRouter возвращает эмбеддинги в поле data
+  const embeddings = data.data.map((item: any) => item.embedding);
+
+  const usage: LLMUsage = {
+    model_id: model,
+    prompt_tokens: data.usage?.total_tokens || 0,
+    completion_tokens: 0,
+    total_cost: calculateCost(model, data.usage?.total_tokens || 0, 0),
+  };
+
+  return { embeddings, usage };
+}
+
+/**
+ * Генерация связного дайджеста на основе кластеров (сюжетов).
+ *
+ * @param clusters - Массив кластеров с метаданными
+ * @param model - Модель LLM (рекомендуется gpt-4o или claude-3.5-sonnet)
+ * @returns Текст дайджеста и данные об использовании
+ */
+export async function generateDigest(
+  clusters: any[],
+  model: string = 'anthropic/claude-3.5-sonnet',
+): Promise<{ content: string; usage: LLMUsage }> {
+  if (clusters.length === 0) {
+    throw new Error('No clusters provided for digest');
+  }
+
+  if (!API_KEYS.OPENROUTER) {
+    throw new Error('OPENROUTER_API_KEY is not defined');
+  }
+
+  // Формируем контекст для редактора
+  const digestContext = clusters.map((c, idx) => ({
+    rank: idx + 1,
+    topic: c.mainPost.name,
+    summary: c.mainPost.tldr_ru || c.mainPost.description,
+    sources: [
+      { type: c.mainPost.source, url: c.mainPost.url, score: c.mainPost.stars },
+      ...c.relatedPosts.map((p: any) => ({ type: p.source, url: p.url, score: p.stars })),
+    ],
+    total_score: c.totalScore.toFixed(1),
+  }));
+
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${API_KEYS.OPENROUTER}`,
+      'HTTP-Referer': 'https://github.com/n3rdfeed',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: model,
+      messages: [
+        { role: 'system', content: LLM_PROMPTS.DIGEST_EDITOR },
+        {
+          role: 'user',
+          content: `Вот главные сюжеты за последние 12 часов. Сформируй из них дайджест:\n\n${JSON.stringify(
+            digestContext,
+            null,
+            2,
+          )}`,
+        },
+      ],
+      temperature: 0.7, // Немного креативности для связности текста
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`OpenRouter Digest error: ${JSON.stringify(error)}`);
+  }
+
+  const data = await response.json();
+  const content = data.choices[0].message.content;
+
+  const usage: LLMUsage = {
+    model_id: model,
+    prompt_tokens: data.usage.prompt_tokens,
+    completion_tokens: data.usage.completion_tokens,
+    total_cost: calculateCost(model, data.usage.prompt_tokens, data.usage.completion_tokens),
+  };
+
+  return { content, usage };
 }

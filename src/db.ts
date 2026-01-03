@@ -30,23 +30,58 @@ function getServiceRoleClient(): SupabaseClient {
  * Формула: Score = BaseScore / (Hours + 2)^Gravity
  */
 export function scorePost(post: Post): number {
-  // 1. Определяем базовый вес (нормализация разных источников)
-  let baseScore = post.stars;
-  if (post.source === 'reddit') baseScore = post.stars * 5; // 1 апвоут Reddit ~ 5 звезд GitHub
-  if (post.source === 'replicate') baseScore = post.stars * 0.5; // 1 запуск Replicate ~ 0.5 звезды
-  if (post.source === 'hackernews') baseScore = post.stars * 4; // 1 балл HN ~ 4 звезды GitHub
+  // 1. Веса источников (Source Multiplier)
+  const sourceWeights: Record<string, number> = {
+    github: 1.8,
+    hackernews: 1.1,
+    huggingface: 1.1,
+    reddit: 0.8,
+    replicate: 0.6,
+  };
+  const weight = sourceWeights[post.source] || 1.0;
 
-  // 2. Считаем время в часах с момента создания
+  // 2. Расчет базовых очков (Base Points) с препроцессингом
+  let points = Number(post.stars) || 0;
+
+  // Препроцессинг Replicate: делим на 100, чтобы уравнять с другими источниками
+  if (post.source === 'replicate') {
+    points = points / 100;
+  }
+
+  // Специальная логика для Hacker News (Учет дискуссий)
+  if (post.source === 'hackernews') {
+    const comments = Number((post as any).comments_count) || 0;
+    points = points + Math.log10(comments + 1) * 2;
+  }
+
+  // 3. Считаем время в часах (Age)
   const createdDate = new Date(post.created_at);
-  const now = new Date();
-  const hoursAge = Math.max(0, (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60));
+  const hoursAge = Math.max(0, (Date.now() - createdDate.getTime()) / (1000 * 60 * 60));
 
-  // 3. Применяем затухание (Gravity)
-  // Коэффициент 1.8 — стандарт для Hacker News, делает затухание довольно быстрым
-  const gravity = 1.8;
-  const finalScore = baseScore / Math.pow(hoursAge + 2, gravity);
+  // 4. Расчет VelocityBonus (Скорость роста)
+  let velocityBonus = 1.0;
+  // Бонус применяется только к свежим новостям (моложе 12 часов)
+  if (hoursAge < 12 && post.metrics_history && post.metrics_history.length > 1) {
+    const now = Date.now();
+    const threeHoursAgo = now - 3 * 60 * 60 * 1000;
+    const pastEntry = post.metrics_history.find((h) => h.ts >= threeHoursAgo) || post.metrics_history[0];
 
-  return finalScore;
+    if (pastEntry && pastEntry.score < post.stars) {
+      const growth = post.stars - pastEntry.score;
+      if (growth > pastEntry.score * 0.1) velocityBonus = 1.5;
+    }
+  }
+
+  // 5. Итоговая формула (Gravity inside Log)
+  // EffectivePoints = Points / (Age + 2)^Gravity
+  const gravity = 1.2;
+  const effectivePoints = points / Math.pow(hoursAge + 2, gravity);
+  
+  // Применяем логарифм к уже "затухшим" очкам
+  const finalScore = Math.log10(effectivePoints + 1) * weight * velocityBonus;
+
+  // Возвращаем sc0re (умножаем на 100 для читаемости в UI)
+  return finalScore * 100;
 }
 
 export type FilterType = 'past_day' | 'past_three_days' | 'past_week';
@@ -89,21 +124,39 @@ export const posts = {
 
   async upsertMany(posts: Post[]): Promise<void> {
     const client = getServiceRoleClient();
-    const dataToUpsert = posts.map((post) => ({
-      id: post.id,
-      source: post.source,
-      username: post.username,
-      name: post.name,
-      name_ru: post.name_ru || null,
-      description: post.description,
-      description_ru: post.description_ru || null,
-      tldr_ru: post.tldr_ru || null,
-      stars: post.stars,
-      url: post.url,
-      created_at: post.created_at,
-    }));
 
-    console.log(`[DB] Upserting ${dataToUpsert.length} rows to 'repositories' table...`);
+    // 1. Получаем текущие метрики для этих постов, чтобы обновить историю
+    const ids = posts.map((p) => p.id);
+    const { data: existingItems } = await client
+      .from('repositories')
+      .select('id, metrics_history')
+      .in('id', ids);
+
+    const historyMap = new Map(existingItems?.map((i) => [i.id, i.metrics_history || []]) || []);
+
+    const dataToUpsert = posts.map((post) => {
+      const currentHistory = historyMap.get(post.id) || [];
+      const newEntry = { ts: Date.now(), score: post.stars };
+
+      // Ограничиваем историю последними 100 записями, чтобы JSON не раздувался
+      const updatedHistory = [...currentHistory, newEntry].slice(-100);
+
+      return {
+        id: post.id,
+        source: post.source,
+        username: post.username,
+        name: post.name,
+        description: post.description,
+        tldr_ru: post.tldr_ru || null,
+        stars: post.stars,
+        url: post.url,
+        created_at: post.created_at,
+        metrics_history: updatedHistory,
+        embedding: post.embedding || null,
+      };
+    });
+
+    console.log(`[DB] Upserting ${dataToUpsert.length} rows with metrics history...`);
 
     const { data, error } = await client
       .from('repositories')
@@ -234,4 +287,106 @@ export const posts = {
     console.log(`[DB] Found ${data?.length || 0} posts without TLDR`);
     return data || [];
   },
+
+  /**
+   * Получение истории опубликованных сюжетов за последние N часов.
+   */
+  async getDigestHistory(hours: number = 36): Promise<{ embedding: number[] }[]> {
+    const client = getClient();
+    const fromDate = new Date();
+    fromDate.setHours(fromDate.getHours() - hours);
+
+    const { data, error } = await client
+      .from('digest_history')
+      .select('embedding')
+      .gt('published_at', fromDate.toISOString());
+
+    if (error) {
+      console.error('[DB] Error fetching digest history:', error);
+      return [];
+    }
+
+    return (data || []).map((item) => ({
+      embedding:
+        typeof item.embedding === 'string' ? JSON.parse(item.embedding) : item.embedding,
+    }));
+  },
+
+  /**
+   * Сохранение опубликованных сюжетов в историю.
+   */
+  async addToDigestHistory(items: { topic_summary: string; embedding: number[] }[]): Promise<void> {
+    const client = getServiceRoleClient();
+    const { error } = await client.from('digest_history').insert(items);
+    if (error) console.error('[DB] Error adding to digest history:', error);
+  },
+
+  /**
+   * Получение кластеризованных постов (Сюжетов).
+   * Группирует семантически похожие посты в один объект.
+   */
+  async queryClustered(options: { filter: FilterType; sources: string[] }): Promise<any[]> {
+    // 1. Получаем обычный список постов
+    const allPosts = await this.query(options);
+    if (allPosts.length === 0) return [];
+
+    const clusters: any[] = [];
+    const processedIds = new Set<string>();
+
+    // 2. Жадный алгоритм кластеризации (Greedy Clustering)
+    for (const post of allPosts) {
+      if (processedIds.has(post.id)) continue;
+
+      const cluster = {
+        id: post.id,
+        mainPost: post,
+        relatedPosts: [] as Post[],
+        totalScore: scorePost(post),
+      };
+
+      processedIds.add(post.id);
+
+      // Если у поста нет эмбеддинга, он сам по себе кластер
+      if (!post.embedding) {
+        clusters.push(cluster);
+        continue;
+      }
+
+      // 3. Ищем похожие посты среди ОСТАЛЬНЫХ (уже загруженных)
+      // Мы не делаем запрос к БД для каждого поста, а сравниваем в памяти для скорости
+      for (const otherPost of allPosts) {
+        if (processedIds.has(otherPost.id) || !otherPost.embedding) continue;
+
+        // Считаем косинусное сходство
+        const similarity = cosineSimilarity(post.embedding, otherPost.embedding);
+
+        // Порог сходства 0.85 (согласно ТЗ)
+        if (similarity > 0.85) {
+          cluster.relatedPosts.push(otherPost);
+          cluster.totalScore += scorePost(otherPost) * 0.2; // Бонус за дублирование в разных источниках
+          processedIds.add(otherPost.id);
+        }
+      }
+
+      clusters.push(cluster);
+    }
+
+    // Сортируем кластеры по итоговому скору
+    return clusters.sort((a, b) => b.totalScore - a.totalScore);
+  },
 };
+
+/**
+ * Вспомогательная функция для расчета косинусного сходства векторов
+ */
+function cosineSimilarity(vecA: number[], vecB: number[]): number {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}

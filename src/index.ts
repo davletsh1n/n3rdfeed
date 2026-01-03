@@ -11,8 +11,18 @@ import { ListPosts, GetLastUpdated } from './endpoints/posts.js';
 import { updateContent } from './scheduled.js';
 import { posts, FilterType, scorePost } from './db.js';
 import type { Post } from './types';
-import { MODEL_RATES, getOpenRouterBalance } from './services/llm.js';
-import { executionLogs, clearExecutionLogs, timeSince } from './utils.js';
+import {
+  MODEL_RATES,
+  getOpenRouterBalance,
+  generateDigest,
+} from './services/llm.js';
+import {
+  executionLogs,
+  clearExecutionLogs,
+  timeSince,
+  categorizePost,
+  cosineSimilarity,
+} from './utils.js';
 import { PAGE_TEMPLATE, ADMIN_TEMPLATE } from './templates.js';
 import { SOURCES, AUTH, SOURCE_ICONS, validateConfig, logConfig } from './config.js';
 import type { LLMStatsRow, LLMLogRow, AdminStats, AdminLog, AdminModel } from './types/api.js';
@@ -58,7 +68,7 @@ const app = new Hono();
 
 app.get('/', async (c) => {
   const filter = (c.req.query('filter') || 'past_week') as FilterType;
-  const sourcesParam = c.req.query('sources') || 'GitHub,HuggingFace,Reddit,Replicate';
+  const sourcesParam = c.req.query('sources') || SOURCES.join(',');
   const sources = sourcesParam.split(',');
 
   const [postList, lastUpdatedRaw] = await Promise.all([
@@ -93,6 +103,99 @@ console.log('[Auth] Admin credentials configured:', {
   userSet: !!process.env.ADMIN_USER,
   passSet: !!process.env.ADMIN_PASS,
   usingDefaults: !process.env.ADMIN_USER || !process.env.ADMIN_PASS,
+});
+
+app.get('/admin/digest', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) {
+    c.header('WWW-Authenticate', 'Basic realm="N3RDFEED Admin"');
+    return c.text('Unauthorized', 401);
+  }
+
+  const [type, credentials] = authHeader.split(' ');
+  const decoded = atob(credentials || '');
+  const [user, pass] = decoded.split(':');
+
+  if (user !== adminUser || pass !== adminPass) {
+    c.header('WWW-Authenticate', 'Basic realm="N3RDFEED Admin"');
+    return c.text('Invalid Credentials', 401);
+  }
+
+  try {
+    // 1. Получаем кластеры за последние 12 часов
+    const clusters = await posts.queryClustered({
+      filter: 'past_day',
+      sources: ['GitHub', 'HuggingFace', 'Reddit', 'HackerNews', 'Replicate'],
+    });
+
+    // 2. Temporal Deduplication: фильтруем то, что уже публиковали за 36 часов
+    const history = await posts.getDigestHistory(36);
+    const uniqueClusters = clusters.filter((cluster) => {
+      if (!cluster.mainPost.embedding) return true;
+      
+      const maxSimilarity = history.length > 0 
+        ? Math.max(...history.map(h => cosineSimilarity(h.embedding, cluster.mainPost.embedding)))
+        : 0;
+      
+      return maxSimilarity < 0.85; // Порог уникальности 85%
+    });
+
+    // 3. Diversity Filter: отбираем топ-8 кластеров с учетом разнообразия
+    const topClusters: any[] = [];
+    const categoryCounts: Record<string, number> = {};
+    const MAX_PER_CATEGORY = 3;
+
+    for (const cluster of uniqueClusters) {
+      if (topClusters.length >= 8) break;
+
+      const category = categorizePost(cluster.mainPost);
+      const count = categoryCounts[category] || 0;
+
+      if (count < MAX_PER_CATEGORY) {
+        topClusters.push(cluster);
+        categoryCounts[category] = count + 1;
+      }
+    }
+
+    // 4. Генерируем дайджест
+    const digest = await generateDigest(topClusters, 'anthropic/claude-3.5-sonnet');
+
+    // 5. Логируем использование LLM
+    await posts.logLLMUsage({
+      ...digest.usage,
+      post_id: `DIGEST_${Date.now()}`,
+      items_count: topClusters.length,
+    });
+
+    // 6. Записываем опубликованные сюжеты в историю
+    if (topClusters.length > 0) {
+      await posts.addToDigestHistory(topClusters.map(c => ({
+        topic_summary: c.mainPost.name,
+        embedding: c.mainPost.embedding
+      })));
+    }
+
+    return c.html(`
+      <html>
+        <head>
+          <title>Digest Preview</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="p-8 bg-gray-100 font-mono text-sm">
+          <div class="max-w-2xl mx-auto bg-white p-8 rounded shadow-sm border-l-4 border-black">
+            <h1 class="text-xl font-bold mb-6 uppercase tracking-tighter">AI Digest Preview</h1>
+            <div class="whitespace-pre-wrap leading-relaxed text-gray-800">${digest.content}</div>
+            <div class="mt-8 pt-4 border-t border-gray-100 text-[10px] text-gray-400">
+              Model: ${digest.usage.model_id} | Cost: $${digest.usage.total_cost.toFixed(5)}
+            </div>
+            <a href="/admin" class="inline-block mt-6 text-blue-500 hover:underline">← Back to Admin</a>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    return c.text(`Error generating digest: ${err.message}`, 500);
+  }
 });
 
 app.get('/admin', async (c) => {

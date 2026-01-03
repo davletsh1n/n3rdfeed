@@ -19,6 +19,8 @@ export interface Post {
   tldr_ru?: string; // AI-generated TLDR на русском (2-3 предложения)
   url: string;
   created_at: string;
+  metrics_history?: { ts: number; score: number }[]; // История изменения популярности
+  embedding?: number[]; // Векторное представление для кластеризации
 }
 
 /**

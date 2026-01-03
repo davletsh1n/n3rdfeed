@@ -22,34 +22,38 @@ import { API_KEYS, LIMITS, REDDIT_SUBREDDITS, REDDIT_FLAIR_FILTERS } from './con
 
 /**
  * Сборщик моделей из Replicate.
- * Replicate - это облачная платформа для запуска ML-моделей.
+ * Оптимизирован: берем только топ-50 за неделю.
  */
 export async function fetchReplicatePosts(): Promise<Post[]> {
   const replicate = new Replicate({ auth: API_KEYS.REPLICATE });
   const posts: Post[] = [];
-  const limit = LIMITS.REPLICATE_LIMIT;
+  const limit = LIMITS.REPLICATE_LIMIT; // Теперь 50 согласно ТЗ
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
-  outer: for await (const batch of replicate.paginate(replicate.models.list)) {
-    if (posts.length >= limit) break;
+  try {
+    outer: for await (const batch of replicate.paginate(replicate.models.list)) {
+      if (posts.length >= limit) break;
 
-    for (const model of batch as ReplicateModel[]) {
-      if (!model.latest_version?.id || model.run_count <= 1) continue;
-      if (new Date(model.latest_version.created_at) < oneWeekAgo) break outer;
+      for (const model of batch as ReplicateModel[]) {
+        if (posts.length >= limit) break outer;
+        if (!model.latest_version?.id || model.run_count <= 1) continue;
+        if (new Date(model.latest_version.created_at) < oneWeekAgo) break outer;
 
-      posts.push({
-        id: hashStringToInt(model.url).toString(),
-        source: 'replicate',
-        username: model.owner,
-        name: model.name,
-        stars: model.run_count,
-        // Нормализуем описание перед сохранением
-        description: sanitizeContent(model.description || ''),
-        url: model.url,
-        created_at: model.latest_version!.created_at,
-      });
+        posts.push({
+          id: hashStringToInt(model.url).toString(),
+          source: 'replicate',
+          username: model.owner,
+          name: model.name,
+          stars: model.run_count,
+          description: sanitizeContent(model.description || ''),
+          url: model.url,
+          created_at: model.latest_version!.created_at,
+        });
+      }
     }
+  } catch (err) {
+    console.error('[Replicate] Fetch error:', err);
   }
 
   addExecutionLog(`Fetched ${posts.length} replicate models`);
@@ -58,67 +62,136 @@ export async function fetchReplicatePosts(): Promise<Post[]> {
 
 /**
  * Сборщик моделей из HuggingFace.
- * HuggingFace - это "GitHub для ML моделей".
+ * Реализует два среза: Trending (по лайкам) и Fresh (по дате).
  */
 export async function fetchHuggingFacePosts(): Promise<Post[]> {
-  const resp = await fetch(
-    `https://huggingface.co/api/models?full=true&limit=${LIMITS.HUGGINGFACE_LIMIT}&sort=lastModified&direction=-1`,
-  );
-  const repos = (await resp.json()) as HuggingFaceModel[];
   const posts: Post[] = [];
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
-  for (const repo of repos) {
-    if (repo.likes <= 1 || repo.downloads <= 1 || !repo.author) continue;
+  const endpoints = [
+    {
+      name: 'Trending',
+      url: `https://huggingface.co/api/models?full=true&limit=100&sort=likes&direction=-1`,
+    },
+    {
+      name: 'Fresh',
+      url: `https://huggingface.co/api/models?full=true&limit=${LIMITS.HUGGINGFACE_LIMIT}&sort=lastModified&direction=-1`,
+    },
+  ];
 
-    const repoIdInt = parseInt(repo._id.substring(10), 16);
+  for (const endpoint of endpoints) {
+    try {
+      const resp = await fetch(endpoint.url);
+      const repos = (await resp.json()) as HuggingFaceModel[];
 
-    posts.push({
-      id: repoIdInt.toString(),
-      source: 'huggingface',
-      username: repo.author,
-      name: repo.id.split('/')[1],
-      stars: repo.likes,
-      // Для HuggingFace оставляем описание пустым, так как парсинг README часто дает неинформативный результат
-      description: '',
-      url: `https://huggingface.co/${repo.id}`,
-      created_at: repo.lastModified,
-    });
+      for (const repo of repos) {
+        // Фильтр: отсекаем мусор (likes > 2 и downloads > 10)
+        if (repo.likes < 2 || repo.downloads < 10 || !repo.author) continue;
+
+        // Для Trending среза дополнительно фильтруем по дате создания (age < 7d)
+        if (endpoint.name === 'Trending' && new Date(repo.lastModified) < oneWeekAgo) continue;
+
+        const repoIdInt = parseInt(repo._id.substring(10), 16);
+
+        posts.push({
+          id: repoIdInt.toString(),
+          source: 'huggingface',
+          username: repo.author,
+          name: repo.id.split('/')[1],
+          stars: repo.likes,
+          description: repo.pipeline_tag || 'ML Model',
+          url: `https://huggingface.co/${repo.id}`,
+          created_at: repo.lastModified,
+        });
+      }
+      addExecutionLog(`[HuggingFace] Sliced '${endpoint.name}' fetched ${repos.length} models`);
+    } catch (err) {
+      console.error(`[HuggingFace] Error fetching ${endpoint.name}:`, err);
+    }
   }
 
-  addExecutionLog(`Fetched ${posts.length} huggingface models`);
+  addExecutionLog(`Fetched total ${posts.length} huggingface models`);
   return posts;
 }
 
 /**
  * Сборщик репозиториев из GitHub.
- * Ищет популярные Python-проекты, созданные за последнюю неделю.
+ * Реализует 4 вектора поиска для максимального охвата (Recall).
+ * Использует правильное URL-кодирование и упрощенные запросы.
  */
 export async function fetchGitHubPosts(lastWeekDate: string): Promise<Post[]> {
   const posts: Post[] = [];
 
-  for (let page = 1; page <= LIMITS.GITHUB_PAGES_LIMIT; page++) {
-    const resp = await fetch(
-      `https://api.github.com/search/repositories?q=language:python+created:>${lastWeekDate}&sort=stars&order=desc&per_page=${LIMITS.GITHUB_PER_PAGE}&page=${page}`,
-      { headers: { 'User-Agent': 'hype-news-aggregator' } },
-    );
-    const data = (await resp.json()) as GitHubSearchResponse;
+  // Окно 60 дней для новых проектов
+  const date60 = new Date();
+  date60.setDate(date60.getDate() - 60);
+  const last60DaysDate = date60.toISOString().slice(0, 10);
 
-    for (const repo of data.items || []) {
-      posts.push({
-        id: repo.id.toString(),
-        source: 'github',
-        username: repo.owner.login,
-        name: repo.name,
-        stars: repo.stargazers_count,
-        // Очищаем описание от возможного мусора
-        description: sanitizeContent(repo.description || ''),
-        url: repo.html_url,
-        created_at: repo.created_at,
+  const searchVectors = [
+    {
+      name: 'Global AI (ML Only)',
+      query: `topic:machine-learning created:>${last60DaysDate} stars:>50`,
+    },
+    {
+      name: 'LLM Systems',
+      query: `topic:llm created:>${last60DaysDate} stars:>30`,
+    },
+    {
+      name: 'Generative AI',
+      query: `topic:generative-ai created:>${last60DaysDate} stars:>30`,
+    },
+  ];
+
+  for (const vector of searchVectors) {
+    try {
+      // ВАЖНО: Кодируем запрос, чтобы пробелы стали %20, а символы > передались верно
+      const encodedQuery = encodeURIComponent(vector.query);
+      const url = `https://api.github.com/search/repositories?q=${encodedQuery}&sort=stars&order=desc&per_page=50`;
+
+      addExecutionLog(`[GitHub] Fetching vector '${vector.name}'...`);
+
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': 'n3rdfeed-aggregator/2.1',
+          'Accept': 'application/vnd.github.v3+json',
+        },
       });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        addExecutionLog(`[GitHub] Error ${resp.status} in vector '${vector.name}': ${errText.substring(0, 100)}`);
+        continue;
+      }
+
+      const data = (await resp.json()) as GitHubSearchResponse;
+
+      // Дедупликация в памяти (если вектора пересеклись)
+      for (const repo of data.items || []) {
+        if (!posts.find((p) => p.id === repo.id.toString())) {
+          // Логируем для проверки данных
+          console.log(`[GitHub] Repo ${repo.name} stars: ${repo.stargazers_count}`);
+          
+          posts.push({
+            id: repo.id.toString(),
+            source: 'github',
+            username: repo.owner.login,
+            name: repo.name,
+            stars: Number(repo.stargazers_count) || 0,
+            description: sanitizeContent(repo.description || ''),
+            url: repo.html_url,
+            created_at: repo.created_at,
+          });
+        }
+      }
+
+      addExecutionLog(`[GitHub] '${vector.name}' -> ${data.items?.length || 0} items`);
+    } catch (err) {
+      console.error(`[GitHub] Fatal error in vector ${vector.name}:`, err);
     }
   }
 
-  addExecutionLog(`Fetched ${posts.length} github repos`);
+  addExecutionLog(`Fetched total ${posts.length} unique github repos`);
   return posts;
 }
 
@@ -301,10 +374,15 @@ export async function fetchHackerNewsPosts(): Promise<Post[]> {
         username: item.by,
         name: sanitizeContent(item.title),
         stars: item.score,
-        description: new URL(item.url).hostname,
+        // Сохраняем количество комментариев в поле stars_extra или подобном, 
+        // но так как у нас нет такого поля в Post, будем использовать description для хранения метаданных
+        // или просто передадим в scorePost через расширенный объект
+        description: `${new URL(item.url).hostname} | ${item.descendants || 0} comments`,
         url: item.url,
         created_at: new Date(item.time * 1000).toISOString(),
-      });
+        // Добавляем временное поле для скоринга (оно не сохранится в БД, но будет доступно в текущем цикле)
+        comments_count: item.descendants || 0,
+      } as any);
     }
   } catch (err) {
     console.error('[HackerNews] Fetch error:', err);

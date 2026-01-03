@@ -7,7 +7,7 @@ import {
   fetchHackerNewsPosts,
 } from './fetchers.js';
 import type { Post } from './types';
-import { generateTLDRBatch } from './services/llm.js';
+import { generateTLDRBatch, generateEmbeddingsBatch } from './services/llm.js';
 import { addExecutionLog } from './utils.js';
 import { LIMITS, LLM_PROMPTS } from './config.js';
 
@@ -20,14 +20,14 @@ export async function updateContent(): Promise<void> {
   addExecutionLog('Manual update triggered');
 
   const date = new Date();
-  date.setDate(date.getDate() - 7);
+  date.setDate(date.getDate() - 7); // Возвращаем 7 дней для pushed-фильтра согласно ТЗ
   const lastWeekDate = date.toISOString().slice(0, 10);
 
   const [huggingFacePosts, gitHubPosts, redditPosts, replicatePosts, hackerNewsPosts] =
     await Promise.all([
-      fetchHuggingFacePosts(),
-      fetchGitHubPosts(lastWeekDate),
-      fetchRedditPosts(),
+    fetchHuggingFacePosts(),
+    fetchGitHubPosts(lastWeekDate),
+    fetchRedditPosts(),
       fetchReplicatePosts(),
       fetchHackerNewsPosts(),
     ]);
@@ -58,8 +58,8 @@ export async function updateContent(): Promise<void> {
   addExecutionLog(`New unique posts identified: ${newPosts.length}`);
 
   if (newPosts.length > 0) {
-    // 2. Генерируем TLDR для ВСЕХ новых постов (батчами по 30 для надежности)
-    const TLDR_BATCH_SIZE = 30;
+    // 2. Генерируем TLDR для ВСЕХ новых постов (батчами по 50 для скорости)
+    const TLDR_BATCH_SIZE = 50;
     let totalGenerated = 0;
     let totalCost = 0;
 
@@ -76,36 +76,53 @@ export async function updateContent(): Promise<void> {
       }));
 
       addExecutionLog(
-        `Starting TLDR batch ${batchNum}/${totalBatches} (${tldrBatch.length} items)...`,
+        `Starting TLDR & Embedding batch ${batchNum}/${totalBatches} (${tldrBatch.length} items)...`,
       );
 
       try {
+        // 3. Генерируем TLDR
         const tldrResults = await generateTLDRBatch(tldrBatch, activeModel);
 
-        // 3. Применяем TLDR к постам
-        batch.forEach((post) => {
+        // 4. Генерируем эмбеддинги для тех, кто получил TLDR
+        const textsToEmbed = batch.map((post) => {
+          const tldr = tldrResults.tldrs[post.id] || post.description || '';
+          return `${post.name}. ${tldr}. Source: ${post.source}`;
+        });
+
+        const embeddingResults = await generateEmbeddingsBatch(textsToEmbed);
+
+        // 5. Применяем результаты к постам
+        batch.forEach((post, idx) => {
           const tldr = tldrResults.tldrs[post.id];
           if (tldr) {
             post.tldr_ru = tldr;
             totalGenerated++;
-          } else {
-            console.warn(`[TLDR] No TLDR for post ${post.id} (${post.name})`);
+          }
+          if (embeddingResults.embeddings[idx]) {
+            post.embedding = embeddingResults.embeddings[idx];
           }
         });
 
-        // 4. Логируем расходы
-        const totalTokens = tldrResults.usage.prompt_tokens + tldrResults.usage.completion_tokens;
-        totalCost += tldrResults.usage.total_cost;
+        // 6. Логируем расходы
+        const totalTokens =
+          tldrResults.usage.prompt_tokens +
+          tldrResults.usage.completion_tokens +
+          embeddingResults.usage.prompt_tokens;
+        const batchCost = tldrResults.usage.total_cost + embeddingResults.usage.total_cost;
+        totalCost += batchCost;
 
         addExecutionLog(
-          `Batch ${batchNum}/${totalBatches}: ${Object.keys(tldrResults.tldrs).length}/${
-            tldrBatch.length
-          } TLDRs, ${totalTokens} tokens, $${tldrResults.usage.total_cost.toFixed(5)}`,
+          `Batch ${batchNum}/${totalBatches}: ${Object.keys(tldrResults.tldrs).length} TLDRs, ${
+            embeddingResults.embeddings.length
+          } Embeddings, ${totalTokens} tokens, $${batchCost.toFixed(5)}`,
         );
 
         await posts.logLLMUsage({
-          ...tldrResults.usage,
-          post_id: `TLDR_BATCH_${batchNum}_${Date.now()}`,
+          model_id: 'mixed-tldr-embedding',
+          prompt_tokens: totalTokens,
+          completion_tokens: tldrResults.usage.completion_tokens,
+          total_cost: batchCost,
+          post_id: `BATCH_${batchNum}_${Date.now()}`,
           items_count: tldrBatch.length,
         });
 
@@ -115,7 +132,7 @@ export async function updateContent(): Promise<void> {
         }
       } catch (err) {
         addExecutionLog(`Error in batch ${batchNum}: ${err}`);
-        console.error('[TLDR] Batch error:', err);
+        console.error('[Batch] Error:', err);
       }
     }
 

@@ -39,6 +39,7 @@ export interface HuggingFaceModel {
   lastModified: string;
   likes: number;
   downloads: number;
+  pipeline_tag?: string;
   tags?: string[];
   siblings?: Array<{
     rfilename: string;
