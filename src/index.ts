@@ -14,15 +14,15 @@ import type { Post } from './types';
 import {
   MODEL_RATES,
   getOpenRouterBalance,
-  generateDigest,
 } from './services/llm.js';
 import {
   executionLogs,
   clearExecutionLogs,
   timeSince,
-  categorizePost,
-  cosineSimilarity,
+  markdownToHtml,
 } from './utils.js';
+import { createDigest } from './services/digest.js';
+import { sendTelegramMessage } from './services/telegram.js';
 import { PAGE_TEMPLATE, ADMIN_TEMPLATE } from './templates.js';
 import { SOURCES, AUTH, SOURCE_ICONS, validateConfig, logConfig } from './config.js';
 import type { LLMStatsRow, LLMLogRow, AdminStats, AdminLog, AdminModel } from './types/api.js';
@@ -67,6 +67,8 @@ function preparePostData(post: Post, index: number) {
 }
 
 const app = new Hono();
+
+let lastDigestResult: { content: string; clusters: any[]; usage?: any } | null = null;
 
 app.get('/', async (c) => {
   const filter = (c.req.query('filter') || 'past_week') as FilterType;
@@ -161,96 +163,130 @@ console.log('[Auth] Admin credentials configured:', {
   usingDefaults: !process.env.ADMIN_USER || !process.env.ADMIN_PASS,
 });
 
-app.get('/admin/digest', async (c) => {
+app.post('/api/admin/preview-digest', async (c) => {
   const authHeader = c.req.header('Authorization');
-  if (!authHeader) {
-    c.header('WWW-Authenticate', 'Basic realm="N3RDFEED Admin"');
-    return c.text('Unauthorized', 401);
-  }
-
+  if (!authHeader) return c.json({ success: false, message: 'Unauthorized' }, 401);
   const [type, credentials] = authHeader.split(' ');
   const decoded = atob(credentials || '');
   const [user, pass] = decoded.split(':');
+  if (user !== adminUser || pass !== adminPass) return c.json({ success: false, message: 'Invalid Credentials' }, 401);
 
-  if (user !== adminUser || pass !== adminPass) {
-    c.header('WWW-Authenticate', 'Basic realm="N3RDFEED Admin"');
-    return c.text('Invalid Credentials', 401);
-  }
+  const { force } = await c.req.json().catch(() => ({ force: false }));
 
   try {
-    // 1. Получаем кластеры за последние 12 часов
-    const clusters = await posts.queryClustered({
-      filter: 'past_day',
-      sources: ['GitHub', 'HuggingFace', 'Reddit', 'HackerNews', 'Replicate'],
-    });
+    const result = await createDigest(force);
+    if (!result) return c.json({ success: false, message: 'No new topics found' });
 
-    // 2. Temporal Deduplication: фильтруем то, что уже публиковали за 36 часов
-    const history = await posts.getDigestHistory(36);
-    const uniqueClusters = clusters.filter((cluster) => {
-      if (!cluster.mainPost.embedding) return true;
-      
-      const maxSimilarity = history.length > 0 
-        ? Math.max(...history.map(h => cosineSimilarity(h.embedding, cluster.mainPost.embedding)))
-        : 0;
-      
-      return maxSimilarity < 0.85; // Порог уникальности 85%
-    });
+    lastDigestResult = result;
 
-    // 3. Diversity Filter: отбираем топ-8 кластеров с учетом разнообразия
-    const topClusters: any[] = [];
-    const categoryCounts: Record<string, number> = {};
-    const MAX_PER_CATEGORY = 3;
+    // Сохраняем в БД для персистентности
+    await posts.saveLastDigest(result);
 
-    for (const cluster of uniqueClusters) {
-      if (topClusters.length >= 8) break;
+    // Логируем генерацию (косты)
+    await posts.logLLMUsage({ ...result.usage, post_id: `PREVIEW_${Date.now()}`, items_count: result.clusters.length });
 
-      const category = categorizePost(cluster.mainPost);
-      const count = categoryCounts[category] || 0;
-
-      if (count < MAX_PER_CATEGORY) {
-        topClusters.push(cluster);
-        categoryCounts[category] = count + 1;
-      }
-    }
-
-    // 4. Генерируем дайджест
-    const digest = await generateDigest(topClusters, 'anthropic/claude-3.5-sonnet');
-
-    // 5. Логируем использование LLM
-    await posts.logLLMUsage({
-      ...digest.usage,
-      post_id: `DIGEST_${Date.now()}`,
-      items_count: topClusters.length,
-    });
-
-    // 6. Записываем опубликованные сюжеты в историю
-    if (topClusters.length > 0) {
-      await posts.addToDigestHistory(topClusters.map(c => ({
-        topic_summary: c.mainPost.name,
-        embedding: c.mainPost.embedding
-      })));
-    }
-
-    return c.html(`
-      <html>
-        <head>
-          <title>Digest Preview</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="p-8 bg-gray-100 font-mono text-sm">
-          <div class="max-w-2xl mx-auto bg-white p-8 rounded shadow-sm border-l-4 border-black">
-            <h1 class="text-xl font-bold mb-6 uppercase tracking-tighter">AI Digest Preview</h1>
-            <div class="whitespace-pre-wrap leading-relaxed text-gray-800">${digest.content}</div>
-            <div class="mt-8 pt-4 border-t border-gray-100 text-[10px] text-gray-400">
-              Model: ${digest.usage.model_id} | Cost: $${digest.usage.total_cost.toFixed(5)}
-            </div>
-            <a href="/admin" class="inline-block mt-6 text-blue-500 hover:underline">← Back to Admin</a>
-          </div>
-        </body>
-      </html>
-    `);
+    return c.json({ success: true, html: markdownToHtml(result.content) });
   } catch (err: any) {
-    return c.text(`Error generating digest: ${err.message}`, 500);
+    return c.json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/admin/load-last-digest', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) return c.json({ success: false, message: 'Unauthorized' }, 401);
+  const [type, credentials] = authHeader.split(' ');
+  const decoded = atob(credentials || '');
+  const [user, pass] = decoded.split(':');
+  if (user !== adminUser || pass !== adminPass) return c.json({ success: false, message: 'Invalid Credentials' }, 401);
+
+  try {
+    const result = await posts.getLastDigest();
+    if (!result) return c.json({ success: false, message: 'No saved digest found' });
+    
+    lastDigestResult = result;
+    
+    return c.json({ success: true, html: markdownToHtml(result.content) });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/admin/send-last-digest', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) return c.json({ success: false, message: 'Unauthorized' }, 401);
+  const [type, credentials] = authHeader.split(' ');
+  const decoded = atob(credentials || '');
+  const [user, pass] = decoded.split(':');
+  if (user !== adminUser || pass !== adminPass) return c.json({ success: false, message: 'Invalid Credentials' }, 401);
+
+  if (!lastDigestResult) return c.json({ success: false, message: 'No digest generated yet' });
+
+  try {
+    const htmlContent = markdownToHtml(lastDigestResult.content);
+    const resultTg = await sendTelegramMessage(htmlContent);
+    
+    if (resultTg.success) {
+        await posts.addToDigestHistory(lastDigestResult.clusters.map(c => ({ topic_summary: c.mainPost.name, embedding: c.mainPost.embedding })));
+        return c.json({ success: true });
+    } else {
+        return c.json({ success: false, message: resultTg.error || 'Failed to send to Telegram' });
+    }
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/admin/send-digest', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) return c.json({ success: false, message: 'Unauthorized' }, 401);
+  const [type, credentials] = authHeader.split(' ');
+  const decoded = atob(credentials || '');
+  const [user, pass] = decoded.split(':');
+  if (user !== adminUser || pass !== adminPass) return c.json({ success: false, message: 'Invalid Credentials' }, 401);
+
+  const { force } = await c.req.json().catch(() => ({ force: false }));
+
+  try {
+    const result = await createDigest(force);
+    if (!result) return c.json({ success: false, message: 'No new topics found' });
+
+    // Сохраняем в БД
+    await posts.saveLastDigest(result);
+
+    const { content, usage, clusters } = result;
+    const htmlContent = markdownToHtml(content);
+    const resultTg = await sendTelegramMessage(htmlContent);
+    
+    if (resultTg.success) {
+        await posts.logLLMUsage({ ...usage, post_id: `DIGEST_TG_${Date.now()}`, items_count: clusters.length });
+        await posts.addToDigestHistory(clusters.map(c => ({ topic_summary: c.mainPost.name, embedding: c.mainPost.embedding })));
+        return c.json({ success: true });
+    } else {
+        return c.json({ success: false, message: resultTg.error || 'Failed to send to Telegram' });
+    }
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/admin/toggle-logs', async (c) => {
+  const authHeader = c.req.header('Authorization');
+  if (!authHeader) return c.json({ success: false, message: 'Unauthorized' }, 401);
+  const [type, credentials] = authHeader.split(' ');
+  const decoded = atob(credentials || '');
+  const [user, pass] = decoded.split(':');
+  if (user !== adminUser || pass !== adminPass) return c.json({ success: false, message: 'Invalid Credentials' }, 401);
+
+  const { enabled } = await c.req.json();
+  
+  // В реальном приложении это нужно сохранять в БД, но пока меняем в памяти конфига
+  // Так как TELEGRAM.SEND_LOGS это const, мы не можем его менять напрямую.
+  // Нужно добавить метод в db.ts для сохранения настроек приложения
+  try {
+    await posts.setAppConfig('telegram_send_logs', String(enabled));
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ success: false, message: err.message });
   }
 });
 
@@ -284,12 +320,12 @@ app.get('/admin', async (c) => {
   try {
     console.log('[Admin] Fetching admin panel data...');
 
-    const [stats, logs, activeModel, balance] = await Promise.all([
+    const [stats, logs, activeModel, balance, aggregatedLogs, tgLogsEnabled] = await Promise.all([
       posts.getStats(30).catch((err) => {
         console.error('[Admin] Error fetching stats:', err);
         return [];
       }),
-      posts.getLLMLogs(20).catch((err) => {
+      posts.getLLMLogs(50).catch((err) => {
         console.error('[Admin] Error fetching logs:', err);
         return [];
       }),
@@ -301,8 +337,45 @@ app.get('/admin', async (c) => {
         console.error('[Admin] Error fetching balance:', err);
         return 0;
       }),
+      posts.getAggregatedLogs(30).catch((err) => {
+        console.error('[Admin] Error fetching aggregated logs:', err);
+        return [];
+      }),
+      posts.getAppConfig('telegram_send_logs').then(v => v === 'true').catch(() => true), // Default true
     ]);
 
+    // Aggregation Logic
+    const byType = { tldr: 0, digest: 0, preview: 0, other: 0 };
+    (aggregatedLogs || []).forEach((l: any) => {
+      const cost = Number(l.total_cost) || 0;
+      if (l.post_id.startsWith('BATCH')) byType.tldr += cost;
+      else if (l.post_id.startsWith('DIGEST')) byType.digest += cost;
+      else if (l.post_id.startsWith('PREVIEW')) byType.preview += cost;
+      else byType.other += cost;
+    });
+
+    const dailyBurn: Record<string, number> = {};
+    const today = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      dailyBurn[d.toISOString().slice(0, 10)] = 0;
+    }
+
+    (aggregatedLogs || []).forEach((l: any) => {
+      const day = l.created_at.split('T')[0];
+      if (dailyBurn[day] !== undefined) {
+        dailyBurn[day] += Number(l.total_cost) || 0;
+      }
+    });
+
+    const maxDaily = Math.max(...Object.values(dailyBurn), 0.1); // Avoid div by zero
+
+    const dailyBurnData = Object.entries(dailyBurn).map(([date, cost]) => ({
+      date: date.slice(5), // MM-DD
+      cost: cost.toFixed(3),
+      height: Math.max(5, (cost / maxDaily) * 100) + '%',
+    }));
 
     const html = Mustache.render(ADMIN_TEMPLATE, {
       user,
@@ -330,6 +403,14 @@ app.get('/admin', async (c) => {
           cost: Number(l.total_cost).toFixed(5),
         }),
       ),
+      byType: {
+        tldr: byType.tldr.toFixed(4),
+        digest: byType.digest.toFixed(4),
+        preview: byType.preview.toFixed(4),
+        other: byType.other.toFixed(4),
+      },
+      dailyBurn: dailyBurnData,
+      tgLogs: tgLogsEnabled,
     });
 
     return c.html(
@@ -361,6 +442,7 @@ app.post('/api/update', async (c) => {
   try {
     clearExecutionLogs();
     await updateContent();
+    await rebuildFeed();
     return c.json({ success: true, logs: executionLogs });
   } catch (err: any) {
     return c.json({ success: false, errors: [{ message: err.message }], logs: executionLogs }, 500);

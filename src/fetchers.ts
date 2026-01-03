@@ -18,7 +18,7 @@ import {
   sanitizeContent,
   addExecutionLog,
 } from './utils.js';
-import { API_KEYS, LIMITS, REDDIT_SUBREDDITS, REDDIT_FLAIR_FILTERS } from './config.js';
+import { API_KEYS, LIMITS, REDDIT_SUBREDDITS, REDDIT_FLAIR_FILTERS, HN_WHITELIST, BANNED_STRINGS } from './config.js';
 
 /**
  * Сборщик моделей из Replicate.
@@ -310,33 +310,6 @@ export async function fetchHackerNewsPosts(): Promise<Post[]> {
   const TOP_STORIES_URL = 'https://hacker-news.firebaseio.com/v0/topstories.json';
   const ITEM_URL = (id: number) => `https://hacker-news.firebaseio.com/v0/item/${id}.json`;
 
-  // Темы, которые мы отсекаем для сохранения фокуса ленты
-  const HN_BLACKLIST = [
-    'politics',
-    'election',
-    'government',
-    'economy',
-    'inflation',
-    'lawsuit',
-    'court',
-    'health',
-    'medical',
-    'cancer',
-    'biology',
-    'climate',
-    'music',
-    'movie',
-    'film',
-    'book review',
-    'recipe',
-    'cooking',
-    'sport',
-    'football',
-    'basketball',
-    'war',
-    'military',
-  ];
-
   try {
     // 1. Получаем список ID топовых постов
     const resp = await fetch(TOP_STORIES_URL);
@@ -362,10 +335,16 @@ export async function fetchHackerNewsPosts(): Promise<Post[]> {
         continue;
       }
 
-      // Тематическая фильтрация (Blacklist)
+      // Тематическая фильтрация
       const titleLower = item.title.toLowerCase();
-      const isBlacklisted = HN_BLACKLIST.some((word) => titleLower.includes(word));
+
+      // 1. Blacklist Check (Глобальный черный список)
+      const isBlacklisted = BANNED_STRINGS.some((word) => titleLower.includes(word));
       if (isBlacklisted) continue;
+
+      // 2. Whitelist Check (Только профильные темы)
+      const isWhitelisted = HN_WHITELIST.some((word) => titleLower.includes(word));
+      if (!isWhitelisted) continue;
 
       // Добавляем историю
       posts.push({

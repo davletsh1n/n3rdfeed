@@ -11,6 +11,9 @@
  * Глобальный массив для временного хранения логов выполнения.
  * Позволяет передавать сообщения из глубоких слоев логики (fetchers, scheduled) в API ответ.
  */
+import { TELEGRAM } from './config.js';
+import { sendTelegramMessage } from './services/telegram.js';
+
 export const executionLogs: string[] = [];
 
 export function addExecutionLog(msg: string) {
@@ -18,6 +21,17 @@ export function addExecutionLog(msg: string) {
   const logMsg = `[${time}] ${msg}`;
   console.log(logMsg); // Дублируем в терминал
   executionLogs.push(logMsg);
+
+  // Отправка важных логов в Telegram
+  if (TELEGRAM.SEND_LOGS) {
+    const isError = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed');
+    const isImportant = msg.includes('Background feed rebuild completed') || msg.includes('Digest sent successfully');
+    
+    if (isError || isImportant) {
+      const emoji = isError ? '🚨' : 'ℹ️';
+      sendTelegramMessage(`${emoji} <b>Log:</b> ${msg}`).catch(err => console.error('Failed to send log to TG:', err));
+    }
+  }
 }
 
 export function clearExecutionLogs() {
@@ -196,4 +210,19 @@ export function categorizePost(post: any): ContentCategory {
   }
 
   return 'General';
+}
+
+/**
+ * Простой конвертер Markdown в HTML для Telegram.
+ * Поддерживает bold, links, headers, lists.
+ */
+export function markdownToHtml(text: string): string {
+  return text
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>') // Bold
+    .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>') // Links
+    .replace(/^#+\s+(.*)$/gm, '<b>$1</b>') // Headers -> Bold
+    .replace(/^\*\s+(.*)$/gm, '• $1'); // Lists
 }

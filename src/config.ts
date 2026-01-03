@@ -22,6 +22,40 @@ export const SOURCES = ['GitHub', 'Replicate', 'HuggingFace', 'Reddit', 'HackerN
 export type Source = (typeof SOURCES)[number];
 
 /**
+ * Белый список ключевых слов для HackerNews.
+ * Пост проходит фильтрацию, если содержит хотя бы одно слово из этого списка.
+ */
+export const HN_WHITELIST = [
+  // AI & ML Core
+  'ai', 'ml', 'llm', 'gpt', 'transformer', 'diffusion', 'neural', 'inference', 'training', 
+  'fine-tuning', 'rag', 'dataset', 'benchmark', 'quantization', 'weights', 'vision', 'nlp', 
+  'rlhf', 'agent', 'embedding', 'model', 'generative', 'language model',
+  
+  // Hardware & Infrastructure
+  'gpu', 'tpu', 'npu', 'lpu', 'nvidia', 'cuda', 'amd', 'rocm', 'intel', 'chip', 'semiconductor', 
+  'tsmc', 'wafer', 'vram', 'hbm', 'datacenter', 'supercomputer', 'compute', 'accelerator', 
+  'h100', 'b200', 'rtx', 'raspberry pi', 'arduino', 'fpga', 'risc-v',
+  
+  // Companies & Tools
+  'openai', 'anthropic', 'deepmind', 'meta', 'google', 'microsoft', 'apple', 'hugging face', 
+  'pytorch', 'tensorflow', 'jax', 'llama', 'mistral', 'claude', 'gemini', 'stable diffusion', 
+  'midjourney', 'replicate', 'langchain', 'ollama', 'docker', 'kubernetes', 'vllm',
+  
+  // Programming Languages
+  'python', 'rust', 'c++', 'cpp', 'javascript', 'typescript', 'go', 'golang', 'java', 
+  'swift', 'kotlin', 'c#', 'ruby', 'php', 'sql', 'assembly', 'wasm', 'webassembly',
+  
+  // OS & Systems
+  'linux', 'unix', 'kernel', 'windows', 'macos', 'android', 'ios', 'bsd', 'ubuntu', 'debian', 'arch',
+  
+  // Gaming & Consoles
+  'game', 'gaming', 'unreal engine', 'unity', 'godot', 'steam', 'playstation', 'xbox', 'nintendo', 'console', 'switch',
+  
+  // Math & Science
+  'algorithm', 'optimization', 'matrix', 'tensor', 'probability', 'math', 'physics', 'science', 'research', 'paper'
+] as const;
+
+/**
  * Черный список слов для фильтрации постов
  */
 export const BANNED_STRINGS = [
@@ -31,6 +65,25 @@ export const BANNED_STRINGS = [
   'clicker',
   'solana',
   'stealer',
+  'bitcoin',
+  'blockchain',
+  'web3',
+  'politics',
+  'election',
+  'trump',
+  'biden',
+  'senate',
+  'congress',
+  'lawsuit',
+  'court',
+  'hiring',
+  'job',
+  'career',
+  'sport',
+  'football',
+  'basketball',
+  'recipe',
+  'cooking',
 ] as const;
 
 /**
@@ -71,6 +124,16 @@ export const AUTH = {
 
   /** Realm для Basic Auth */
   REALM: 'N3RDFEED Admin',
+} as const;
+
+/**
+ * Настройки Telegram
+ */
+export const TELEGRAM = {
+  BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '',
+  CHAT_ID: process.env.TELEGRAM_CHAT_ID || '',
+  /** Включена ли отправка логов в Telegram */
+  SEND_LOGS: process.env.TELEGRAM_SEND_LOGS === 'true',
 } as const;
 
 /**
@@ -213,6 +276,7 @@ TONE OF VOICE:
 3. Если новость про бенчмарки — дай конкретные цифры.
 4. Не используй вводные слова ("Кстати", "В общем").
 5. Финальный текст должен читаться за 1 минуту.
+6. ВАЖНО: Между пунктами списка и заголовками делай пустую строку для читаемости. Ссылки ставь на новой строке только если это блок "Главная Стори". В списках инструментов старайся делать ссылку в конце строки или на новой строке, но компактно.
 `,
 } as const;
 
@@ -224,7 +288,7 @@ export const SOURCE_ICONS: Record<string, string> = {
   reddit: '👽',
   replicate: '®️',
   github: '⭐',
-  hackernews: '🧡',
+  hackernews: '🟧',
 } as const;
 
 /**
@@ -241,6 +305,8 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
     REPLICATE_API_TOKEN: API_KEYS.REPLICATE,
     ADMIN_USER: AUTH.ADMIN_USER,
     ADMIN_PASS: AUTH.ADMIN_PASS,
+    TELEGRAM_BOT_TOKEN: TELEGRAM.BOT_TOKEN,
+    TELEGRAM_CHAT_ID: TELEGRAM.CHAT_ID,
   };
 
   // Простая валидация без импорта validators (чтобы избежать циклических зависимостей)
@@ -262,6 +328,9 @@ export function validateConfig(): { valid: boolean; errors: string[] } {
   }
   if (!API_KEYS.REPLICATE) {
     console.warn('[Config] REPLICATE_API_TOKEN is not set - Replicate fetcher will not work');
+  }
+  if (!TELEGRAM.BOT_TOKEN) {
+    console.warn('[Config] TELEGRAM_BOT_TOKEN is not set - Telegram bot will not work');
   }
   if (AUTH.ADMIN_USER === 'admin' || AUTH.ADMIN_PASS === 'admin') {
     console.warn('[Config] Using default admin credentials - please set ADMIN_USER and ADMIN_PASS');

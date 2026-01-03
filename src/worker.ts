@@ -6,8 +6,10 @@
 import { posts } from './db.js';
 import { feedCache } from './cache.js';
 import { updateContent } from './scheduled.js';
-import { addExecutionLog, normalizeUrl } from './utils.js';
+import { addExecutionLog, normalizeUrl, markdownToHtml } from './utils.js';
 import { SOURCES } from './config.js';
+import { createDigest } from './services/digest.js';
+import { sendTelegramMessage } from './services/telegram.js';
 
 const REBUILD_INTERVAL = 15 * 60 * 1000; // 15 minutes
 const INGESTION_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -121,6 +123,50 @@ export async function rebuildFeed() {
   }
 }
 
+async function checkDigestSchedule() {
+  const now = new Date();
+  // Московское время (UTC+3)
+  // Получаем текущий час в UTC и добавляем 3
+  const mskHour = (now.getUTCHours() + 3) % 24;
+  const mskMinutes = now.getUTCMinutes();
+
+  // Проверяем 9:00 и 21:00 MSK (с допуском 5 минут, чтобы не пропустить)
+  // Воркер запускается часто, поэтому нужен флаг или проверка последнего запуска
+  // Для простоты проверяем начало часа (0-14 минут) и используем БД для дедупликации
+  if ((mskHour === 9 || mskHour === 21) && mskMinutes < 15) {
+    const lastDigest = await posts.getLastDigest();
+    
+    // Если последний дайджест был создан более 1 часа назад, значит в этом слоте еще не генерировали
+    // (или вообще не генерировали)
+    // Но getLastDigest возвращает контент, а не дату.
+    // Лучше проверить историю дайджестов
+    const history = await posts.getDigestHistory(2); // За последние 2 часа
+    if (history.length === 0) {
+       addExecutionLog(`[Schedule] Starting scheduled digest generation for ${mskHour}:00 MSK`);
+       try {
+         const result = await createDigest(false); // Не форсируем, учитываем историю
+         if (result) {
+            await posts.saveLastDigest(result);
+            const html = markdownToHtml(result.content);
+            const sent = await sendTelegramMessage(html);
+            
+            if (sent.success) {
+                await posts.logLLMUsage({ ...result.usage, post_id: `DIGEST_AUTO_${Date.now()}`, items_count: result.clusters.length });
+                await posts.addToDigestHistory(result.clusters.map(c => ({ topic_summary: c.mainPost.name, embedding: c.mainPost.embedding })));
+                addExecutionLog('[Schedule] Digest sent successfully');
+            } else {
+                addExecutionLog(`[Schedule] Failed to send digest: ${sent.error}`);
+            }
+         } else {
+             addExecutionLog('[Schedule] No new topics for digest');
+         }
+       } catch (err: any) {
+           addExecutionLog(`[Schedule] Error generating digest: ${err.message}`);
+       }
+    }
+  }
+}
+
 export function startWorker() {
   // Initial rebuild - NON-BLOCKING
   rebuildFeed().catch(err => console.error('Initial rebuild failed:', err));
@@ -141,4 +187,9 @@ export function startWorker() {
       addExecutionLog(`Background ingestion failed: ${err}`);
     }
   }, INGESTION_INTERVAL);
+
+  // Schedule Digest Check (every 10 minutes)
+  setInterval(() => {
+    checkDigestSchedule().catch(err => console.error('Digest schedule check failed:', err));
+  }, 10 * 60 * 1000);
 }

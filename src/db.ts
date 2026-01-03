@@ -230,6 +230,27 @@ export const posts = {
   },
 
   /**
+   * Получение сырых логов за период для агрегации
+   */
+  async getAggregatedLogs(days: number = 30) {
+    const client = getServiceRoleClient();
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - days);
+    
+    const { data, error } = await client
+      .from('llm_usage')
+      .select('*')
+      .gt('created_at', fromDate.toISOString())
+      .order('created_at', { ascending: false });
+      
+    if (error) {
+      console.error('[DB] Error fetching aggregated logs:', error);
+      return [];
+    }
+    return data;
+  },
+
+  /**
    * Получение активной модели LLM из конфигурации
    */
   async getActiveModel(): Promise<string> {
@@ -251,6 +272,62 @@ export const posts = {
       .from('app_config')
       .upsert({ key: 'active_llm_model', value: modelId }, { onConflict: 'key' });
     if (error) throw new Error(`Error setting active model: ${error.message}`);
+  },
+
+  /**
+   * Сохранение состояния последнего сгенерированного дайджеста (контент + кластеры)
+   */
+  async saveLastDigest(state: { content: string; clusters: any[] }): Promise<void> {
+    const client = getServiceRoleClient();
+    // Supabase app_config value is text, so we stringify
+    const { error } = await client
+      .from('app_config')
+      .upsert({ key: 'last_digest_state', value: JSON.stringify(state) }, { onConflict: 'key' });
+    if (error) console.error(`Error saving last digest state: ${error.message}`);
+  },
+
+  /**
+   * Получение состояния последнего сгенерированного дайджеста
+   */
+  async getLastDigest(): Promise<{ content: string; clusters: any[]; usage?: any } | null> {
+    const client = getClient();
+    const { data } = await client
+      .from('app_config')
+      .select('value')
+      .eq('key', 'last_digest_state')
+      .single();
+    
+    if (!data?.value) return null;
+    try {
+      return JSON.parse(data.value);
+    } catch (e) {
+      console.error('Error parsing last digest state:', e);
+      return null;
+    }
+  },
+
+  /**
+   * Получение значения из app_config
+   */
+  async getAppConfig(key: string): Promise<string | null> {
+    const client = getClient();
+    const { data } = await client
+      .from('app_config')
+      .select('value')
+      .eq('key', key)
+      .single();
+    return data?.value || null;
+  },
+
+  /**
+   * Сохранение значения в app_config
+   */
+  async setAppConfig(key: string, value: string): Promise<void> {
+    const client = getServiceRoleClient();
+    const { error } = await client
+      .from('app_config')
+      .upsert({ key, value }, { onConflict: 'key' });
+    if (error) throw new Error(`Error setting config ${key}: ${error.message}`);
   },
 
   async getLastUpdated(): Promise<string | null> {

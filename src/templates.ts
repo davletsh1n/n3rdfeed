@@ -180,96 +180,150 @@ export const PAGE_TEMPLATE = `<!DOCTYPE html>
   </body>
 </html>`;
 
-export const ADMIN_TEMPLATE = `<div class="max-w-4xl mx-auto space-y-8">
-  <div class="flex justify-between items-center bg-white p-6 rounded shadow-sm border-l-4 border-black">
+export const ADMIN_TEMPLATE = `<div class="max-w-6xl mx-auto space-y-6">
+  <!-- Header -->
+  <div class="flex justify-between items-center bg-white p-4 rounded shadow-sm border-l-4 border-black">
     <div>
-      <h1 class="text-2xl font-bold uppercase tracking-tighter">N3RDFEED Control Center</h1>
+      <h1 class="text-xl font-bold uppercase tracking-tighter">N3RDFEED Control Center</h1>
       <p class="text-gray-500 text-xs mt-1">Admin: {{user}}</p>
     </div>
-    <div class="flex gap-4 items-center">
-      <div id="statusIndicator" class="hidden items-center gap-2 text-xs font-bold text-blue-600 animate-pulse">
-        <span class="w-2 h-2 bg-blue-600 rounded-full"></span> PROCESSING...
-      </div>
-      <a href="/admin/digest" target="_blank" class="bg-blue-600 text-white px-4 py-2 hover:bg-blue-700 transition-all uppercase font-bold text-xs">Generate AI Digest</a>
-      <button onclick="updateContent()" id="updateBtn" class="bg-black text-white px-4 py-2 hover:bg-gray-800 transition-all uppercase font-bold text-xs">Run Manual Update</button>
-      <button onclick="logout()" class="bg-red-500 text-white px-4 py-2 hover:bg-red-600 transition-all uppercase font-bold text-xs">Logout</button>
+    <div class="text-right">
+      <div class="text-[10px] text-gray-400 uppercase">Balance</div>
+      <div class="text-lg font-bold text-green-600">\${{balance}}</div>
     </div>
   </div>
-  <div id="liveLogsContainer" class="hidden bg-black text-green-400 p-4 rounded shadow-inner font-mono text-[10px] h-40 overflow-y-auto border-2 border-gray-800 relative group">
-    <div id="liveLogs"></div>
-    <button onclick="toggleLogs()" class="absolute top-2 right-2 bg-gray-800 text-gray-400 px-2 py-1 rounded hover:text-white text-[8px] uppercase opacity-0 group-hover:opacity-100 transition-opacity">Toggle Size</button>
-  </div>
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-    <div class="md:col-span-1 bg-white p-6 rounded shadow-sm border-l-4 border-blue-500">
-      <div class="flex justify-between items-center mb-4">
-        <h2 class="font-bold uppercase text-blue-500">LLM Configuration</h2>
-        <div class="text-right">
-          <div class="text-[8px] text-gray-400 uppercase">Balance</div>
-          <div class="text-xs font-bold text-green-600">\${{balance}}</div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Left Column: Controls -->
+    <div class="lg:col-span-1 space-y-6">
+      
+      <!-- Digest Controls -->
+      <div class="bg-white p-4 rounded shadow-sm border-l-4 border-blue-500">
+        <h2 class="font-bold uppercase text-blue-500 mb-4 text-xs">Digest Management</h2>
+        <div class="space-y-2">
+          <button onclick="generatePreview()" id="previewBtn" class="w-full bg-blue-600 text-white px-4 py-2 hover:bg-blue-700 transition-all uppercase font-bold text-xs rounded">Generate Preview</button>
+          <button onclick="loadLastDigest()" id="loadLastBtn" class="w-full bg-gray-600 text-white px-4 py-2 hover:bg-gray-700 transition-all uppercase font-bold text-xs rounded">Load Last Generated</button>
+          <button onclick="generateAndSend()" id="genSendBtn" class="w-full bg-purple-600 text-white px-4 py-2 hover:bg-purple-700 transition-all uppercase font-bold text-xs rounded">Generate & Send New</button>
         </div>
       </div>
-      <div class="space-y-4">
-        {{#models}}
-        <div onclick="selectModel('{{id}}')" class="p-3 border rounded cursor-pointer hover:bg-blue-50 transition-colors group relative {{#active}}border-blue-500 bg-blue-50{{/active}}">
-          <div class="font-bold text-xs group-hover:text-blue-600">{{name}}</div>
-          <div class="text-[10px] text-gray-500 mt-1">Prompt: \${{prompt}}/1M<br />Completion: \${{completion}}/1M</div>
-          {{#active}}<div class="absolute top-2 right-2 text-[8px] bg-blue-500 text-white px-1 rounded">ACTIVE</div>{{/active}}
-          {{^active}}<div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-[8px] bg-gray-500 text-white px-1 rounded">SELECT</div>{{/active}}
+
+      <!-- System Controls -->
+      <div class="bg-white p-4 rounded shadow-sm border-l-4 border-gray-800">
+        <h2 class="font-bold uppercase text-gray-800 mb-4 text-xs">System</h2>
+        <div class="space-y-2">
+          <button onclick="updateContent()" id="updateBtn" class="w-full bg-black text-white px-4 py-2 hover:bg-gray-800 transition-all uppercase font-bold text-xs rounded">Run Manual Update</button>
+          <div class="flex items-center justify-between p-2 border rounded bg-gray-50">
+             <span class="text-[10px] font-bold text-gray-600">Telegram Logs</span>
+             <label class="relative inline-flex items-center cursor-pointer">
+               <input type="checkbox" id="tgLogsToggle" class="sr-only peer" onchange="toggleTgLogs(this.checked)" {{#tgLogs}}checked{{/tgLogs}}>
+               <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+             </label>
+          </div>
+          <button onclick="logout()" class="w-full bg-red-500 text-white px-4 py-2 hover:bg-red-600 transition-all uppercase font-bold text-xs rounded">Logout</button>
         </div>
-        {{/models}}
+        <div id="statusIndicator" class="hidden items-center gap-2 text-xs font-bold text-blue-600 animate-pulse mt-4 justify-center">
+          <span class="w-2 h-2 bg-blue-600 rounded-full"></span> PROCESSING...
+        </div>
+      </div>
+
+      <!-- Model Selection -->
+      <div class="bg-white p-4 rounded shadow-sm border-l-4 border-indigo-500">
+        <h2 class="font-bold uppercase text-indigo-500 mb-4 text-xs">Active Model</h2>
+        <div class="space-y-2">
+          {{#models}}
+          <div onclick="selectModel('{{id}}')" class="p-2 border rounded cursor-pointer hover:bg-indigo-50 transition-colors group relative {{#active}}border-indigo-500 bg-indigo-50{{/active}}">
+            <div class="font-bold text-[10px] group-hover:text-indigo-600">{{name}}</div>
+            <div class="text-[8px] text-gray-500">Prompt: \${{prompt}} | Compl: \${{completion}}</div>
+            {{#active}}<div class="absolute top-2 right-2 text-[8px] bg-indigo-500 text-white px-1 rounded">ACTIVE</div>{{/active}}
+          </div>
+          {{/models}}
+        </div>
       </div>
     </div>
-    <div class="md:col-span-2 bg-white p-6 rounded shadow-sm border-l-4 border-green-500">
-      <h2 class="font-bold mb-4 uppercase text-green-500">Usage Statistics (30d)</h2>
-      <table class="w-full text-left border-collapse">
-        <thead>
-          <tr class="border-b text-[10px] text-gray-400 uppercase">
-            <th class="py-2">Model</th>
-            <th class="py-2">Tokens</th>
-            <th class="py-2 text-right">Cost (USD)</th>
-          </tr>
-        </thead>
-        <tbody class="text-xs">
-          {{#stats}}
-          <tr class="border-b hover:bg-green-50">
-            <td class="py-2">{{model}}</td>
-            <td class="py-2">{{tokens}}</td>
-            <td class="py-2 text-right font-bold">\${{cost}}</td>
-          </tr>
-          {{/stats}}
-        </tbody>
-      </table>
-      <div class="mt-4 text-right">
-        <span class="text-[10px] text-gray-400 uppercase">Total Burn:</span>
-        <span class="text-lg font-bold ml-2">\${{totalCost}}</span>
+
+    <!-- Right Column: Stats & Logs -->
+    <div class="lg:col-span-2 space-y-6">
+      
+      <!-- Preview Area (Hidden by default) -->
+      <div id="previewContainer" class="hidden bg-white p-6 rounded shadow-sm border-l-4 border-yellow-500 relative">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="font-bold uppercase text-yellow-500">Digest Preview</h2>
+            <button onclick="closePreview()" class="text-gray-400 hover:text-gray-600">✕</button>
+        </div>
+        <div id="previewContent" class="prose prose-sm max-w-none mb-6 font-mono text-xs whitespace-pre-wrap bg-gray-50 p-4 rounded border overflow-x-auto max-h-96"></div>
+        <div class="flex gap-4">
+            <button onclick="sendLastDigest()" id="sendLastBtn" class="bg-green-600 text-white px-4 py-2 hover:bg-green-700 transition-all uppercase font-bold text-xs rounded">Confirm & Send to Telegram</button>
+            <button onclick="closePreview()" class="bg-gray-500 text-white px-4 py-2 hover:bg-gray-600 transition-all uppercase font-bold text-xs rounded">Discard</button>
+        </div>
       </div>
+
+      <!-- Stats Overview -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-white p-4 rounded shadow-sm border-l-4 border-green-500">
+          <div class="text-[10px] text-gray-400 uppercase">Total Burn (30d)</div>
+          <div class="text-2xl font-bold text-green-600">\${{totalCost}}</div>
+        </div>
+        <div class="bg-white p-4 rounded shadow-sm border-l-4 border-purple-500">
+           <div class="text-[10px] text-gray-400 uppercase">Usage by Type</div>
+           <div class="grid grid-cols-2 gap-2 text-[10px] mt-1">
+             <div>TLDR: <b>\${{byType.tldr}}</b></div>
+             <div>Digest: <b>\${{byType.digest}}</b></div>
+             <div>Preview: <b>\${{byType.preview}}</b></div>
+             <div>Other: <b>\${{byType.other}}</b></div>
+           </div>
+        </div>
+      </div>
+
+      <!-- Daily Burn Chart -->
+      <div class="bg-white p-4 rounded shadow-sm border-l-4 border-orange-500">
+        <h2 class="font-bold uppercase text-orange-500 mb-4 text-xs">Daily Burn (7d)</h2>
+        <div class="flex items-end justify-between h-24 gap-2">
+          {{#dailyBurn}}
+          <div class="flex flex-col items-center w-full group relative">
+            <div class="w-full bg-orange-200 hover:bg-orange-400 transition-all rounded-t" style="height: {{height}}"></div>
+            <div class="text-[8px] text-gray-500 mt-1">{{date}}</div>
+            <div class="absolute bottom-full mb-1 opacity-0 group-hover:opacity-100 bg-black text-white text-[8px] px-1 rounded">\${{cost}}</div>
+          </div>
+          {{/dailyBurn}}
+        </div>
+      </div>
+
+      <!-- Recent Logs -->
+      <div class="bg-white p-4 rounded shadow-sm border-l-4 border-gray-400">
+        <h2 class="font-bold uppercase text-gray-400 mb-4 text-xs">Recent Logs</h2>
+        <div class="overflow-x-auto max-h-60 overflow-y-auto">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b text-[9px] text-gray-400 uppercase sticky top-0 bg-white">
+                <th class="py-2">Time</th>
+                <th class="py-2">Model</th>
+                <th class="py-2">Tokens</th>
+                <th class="py-2 text-right">Cost</th>
+              </tr>
+            </thead>
+            <tbody class="text-[10px]">
+              {{#logs}}
+              <tr class="border-b hover:bg-gray-50">
+                <td class="py-1 text-gray-500 whitespace-nowrap">{{time}}</td>
+                <td class="py-1">{{model_id}}</td>
+                <td class="py-1">{{tokens}}</td>
+                <td class="py-1 text-right font-bold">\${{cost}}</td>
+              </tr>
+              {{/logs}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- Live Logs -->
+      <div id="liveLogsContainer" class="hidden bg-black text-green-400 p-4 rounded shadow-inner font-mono text-[10px] h-40 overflow-y-auto border-2 border-gray-800 relative group">
+        <div id="liveLogs"></div>
+        <button onclick="toggleLogs()" class="absolute top-2 right-2 bg-gray-800 text-gray-400 px-2 py-1 rounded hover:text-white text-[8px] uppercase opacity-0 group-hover:opacity-100 transition-opacity">Toggle Size</button>
+      </div>
+
     </div>
   </div>
-  <div class="bg-white p-6 rounded shadow-sm border-l-4 border-purple-500">
-    <h2 class="font-bold mb-4 uppercase text-purple-500">Recent Translation Logs</h2>
-    <div class="overflow-x-auto">
-      <table class="w-full text-left border-collapse">
-        <thead>
-          <tr class="border-b text-[10px] text-gray-400 uppercase">
-            <th class="py-2">Time</th>
-            <th class="py-2">Model</th>
-            <th class="py-2">Tokens</th>
-            <th class="py-2 text-right">Cost</th>
-          </tr>
-        </thead>
-        <tbody class="text-[10px]">
-          {{#logs}}
-          <tr class="border-b hover:bg-purple-50">
-            <td class="py-2 text-gray-500">{{time}}</td>
-            <td class="py-2">{{model_id}}</td>
-            <td class="py-2">{{tokens}}</td>
-            <td class="py-2 text-right font-bold">\${{cost}}</td>
-          </tr>
-          {{/logs}}
-        </tbody>
-      </table>
-    </div>
-  </div>
+</div>
 </div>
 <script>
   function addLog(msg, type = 'info') {
@@ -290,6 +344,106 @@ export const ADMIN_TEMPLATE = `<div class="max-w-4xl mx-auto space-y-8">
     const url = location.protocol + '//' + 'logout:logout@' + location.host + '/admin';
     fetch(url).then(() => { location.href = '/'; }).catch(() => { location.href = '/'; });
   }
+
+  async function generatePreview(force = false) {
+    const btn = document.getElementById('previewBtn');
+    const container = document.getElementById('previewContainer');
+    const content = document.getElementById('previewContent');
+    const sendLastBtn = document.getElementById('sendLastBtn');
+    
+    btn.disabled = true; btn.innerText = 'Generating...'; btn.classList.add('opacity-50');
+    
+    try {
+      const res = await fetch('/api/admin/preview-digest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force }) });
+      const data = await res.json();
+      
+      if (data.success) {
+        content.innerHTML = data.html;
+        container.classList.remove('hidden');
+        sendLastBtn.classList.remove('hidden');
+      } else {
+        if (data.message === 'No new topics found' && !force) {
+            if (confirm('No new topics found. Force generate from history?')) {
+                return generatePreview(true);
+            }
+        } else {
+            alert('Failed: ' + data.message);
+        }
+      }
+    } catch (err) { alert('Error: ' + err.message); } 
+    finally { btn.disabled = false; btn.innerText = 'Generate Preview'; btn.classList.remove('opacity-50'); }
+  }
+
+  async function loadLastDigest() {
+    const btn = document.getElementById('loadLastBtn');
+    const container = document.getElementById('previewContainer');
+    const content = document.getElementById('previewContent');
+    const sendLastBtn = document.getElementById('sendLastBtn');
+    
+    btn.disabled = true; btn.innerText = 'Loading...'; btn.classList.add('opacity-50');
+    
+    try {
+      const res = await fetch('/api/admin/load-last-digest', { method: 'POST' });
+      const data = await res.json();
+      
+      if (data.success) {
+        content.innerHTML = data.html;
+        container.classList.remove('hidden');
+        sendLastBtn.classList.remove('hidden');
+      } else {
+        alert('Failed: ' + data.message);
+      }
+    } catch (err) { alert('Error: ' + err.message); } 
+    finally { btn.disabled = false; btn.innerText = 'Load Last'; btn.classList.remove('opacity-50'); }
+  }
+
+  async function sendLastDigest() {
+    if (!confirm('Send this digest to Telegram?')) return;
+    
+    const btns = document.querySelectorAll('button');
+    btns.forEach(b => b.disabled = true);
+    
+    try {
+      const res = await fetch('/api/admin/send-last-digest', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) { 
+        alert('Digest sent successfully!'); 
+        document.getElementById('previewContainer').classList.add('hidden');
+      } else { 
+        alert('Failed: ' + data.message); 
+      }
+    } catch (err) { alert('Error: ' + err.message); }
+    finally { btns.forEach(b => b.disabled = false); }
+  }
+
+  async function generateAndSend(force = false) {
+    if (!force && !confirm('Generate NEW digest and send immediately?')) return;
+    
+    const btn = document.getElementById('genSendBtn');
+    const originalText = btn.innerText;
+    btn.disabled = true; btn.innerText = 'Sending...'; btn.classList.add('opacity-50');
+    
+    try {
+      const res = await fetch('/api/admin/send-digest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force }) });
+      const data = await res.json();
+      if (data.success) { 
+          alert('Digest sent to Telegram!'); 
+      } else { 
+          if (data.message === 'No new topics found' && !force) {
+              if (confirm('No new topics found. Force generate and send?')) {
+                  return generateAndSend(true);
+              }
+          } else {
+              alert('Failed: ' + data.message); 
+          }
+      }
+    } catch (err) { alert('Error: ' + err.message); } finally { btn.disabled = false; btn.innerText = originalText; btn.classList.remove('opacity-50'); }
+  }
+  
+  function closePreview() {
+    document.getElementById('previewContainer').classList.add('hidden');
+  }
+
   async function selectModel(modelId) {
     try {
       const res = await fetch('/api/admin/set-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modelId }), });
@@ -313,5 +467,23 @@ export const ADMIN_TEMPLATE = `<div class="max-w-4xl mx-auto space-y-8">
       if (data.logs && Array.isArray(data.logs)) { data.logs.forEach(log => addLog(log.replace(/\\[.*?\\] /, ''))); }
       if (data.success) { addLog('Update successful! Page will reload in 5s...'); setTimeout(() => location.reload(), 5000); } else { addLog('Update failed: ' + (data.errors?.[0]?.message || 'Unknown error'), 'error'); }
     } catch (err) { addLog('Network error: ' + err.message, 'error'); } finally { btn.disabled = false; btn.innerText = originalText; btn.classList.remove('opacity-50'); status.classList.add('hidden'); status.classList.remove('flex'); /* Оставляем логи видимыми */ }
+  }
+
+  async function toggleTgLogs(enabled) {
+    try {
+      const res = await fetch('/api/admin/toggle-logs', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }) 
+      });
+      const data = await res.json();
+      if (!data.success) {
+        alert('Failed to toggle logs: ' + data.message);
+        document.getElementById('tgLogsToggle').checked = !enabled; // Revert
+      }
+    } catch (err) {
+      alert('Error: ' + err.message);
+      document.getElementById('tgLogsToggle').checked = !enabled; // Revert
+    }
   }
 </script>`;
