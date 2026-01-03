@@ -13,6 +13,7 @@
  */
 import { TELEGRAM } from './config.js';
 import { sendTelegramMessage } from './services/telegram.js';
+import { dynamicConfig } from './services/config.js';
 
 export const executionLogs: string[] = [];
 
@@ -23,9 +24,13 @@ export function addExecutionLog(msg: string) {
   executionLogs.push(logMsg);
 
   // Отправка важных логов в Telegram
-  if (TELEGRAM.SEND_LOGS) {
+  if (dynamicConfig.telegramSendLogs) {
     const isError = msg.toLowerCase().includes('error') || msg.toLowerCase().includes('failed');
-    const isImportant = msg.includes('Background feed rebuild completed') || msg.includes('Digest sent successfully');
+    const isImportant = 
+      msg.includes('Digest sent successfully') || 
+      msg.includes('Fetched') || 
+      msg.includes('New unique posts') || 
+      msg.includes('Successfully added');
     
     if (isError || isImportant) {
       const emoji = isError ? '🚨' : 'ℹ️';

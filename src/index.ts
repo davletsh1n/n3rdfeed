@@ -23,6 +23,7 @@ import {
 } from './utils.js';
 import { createDigest } from './services/digest.js';
 import { sendTelegramMessage } from './services/telegram.js';
+import { dynamicConfig, setTelegramSendLogs } from './services/config.js';
 import { PAGE_TEMPLATE, ADMIN_TEMPLATE } from './templates.js';
 import { SOURCES, AUTH, SOURCE_ICONS, validateConfig, logConfig } from './config.js';
 import type { LLMStatsRow, LLMLogRow, AdminStats, AdminLog, AdminModel } from './types/api.js';
@@ -279,11 +280,9 @@ app.post('/api/admin/toggle-logs', async (c) => {
 
   const { enabled } = await c.req.json();
   
-  // В реальном приложении это нужно сохранять в БД, но пока меняем в памяти конфига
-  // Так как TELEGRAM.SEND_LOGS это const, мы не можем его менять напрямую.
-  // Нужно добавить метод в db.ts для сохранения настроек приложения
   try {
     await posts.setAppConfig('telegram_send_logs', String(enabled));
+    setTelegramSendLogs(enabled);
     return c.json({ success: true });
   } catch (err: any) {
     return c.json({ success: false, message: err.message });
@@ -320,7 +319,7 @@ app.get('/admin', async (c) => {
   try {
     console.log('[Admin] Fetching admin panel data...');
 
-    const [stats, logs, activeModel, balance, aggregatedLogs, tgLogsEnabled] = await Promise.all([
+    const [stats, logs, activeModel, balance, aggregatedLogs] = await Promise.all([
       posts.getStats(30).catch((err) => {
         console.error('[Admin] Error fetching stats:', err);
         return [];
@@ -341,7 +340,6 @@ app.get('/admin', async (c) => {
         console.error('[Admin] Error fetching aggregated logs:', err);
         return [];
       }),
-      posts.getAppConfig('telegram_send_logs').then(v => v === 'true').catch(() => true), // Default true
     ]);
 
     // Aggregation Logic
@@ -410,7 +408,7 @@ app.get('/admin', async (c) => {
         other: byType.other.toFixed(4),
       },
       dailyBurn: dailyBurnData,
-      tgLogs: tgLogsEnabled,
+      tgLogs: dynamicConfig.telegramSendLogs,
     });
 
     return c.html(

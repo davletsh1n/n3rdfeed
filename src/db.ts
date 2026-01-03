@@ -290,7 +290,7 @@ export const posts = {
    * Получение состояния последнего сгенерированного дайджеста
    */
   async getLastDigest(): Promise<{ content: string; clusters: any[]; usage?: any } | null> {
-    const client = getClient();
+    const client = getServiceRoleClient(); // Используем Service Role для обхода RLS
     const { data } = await client
       .from('app_config')
       .select('value')
@@ -310,7 +310,7 @@ export const posts = {
    * Получение значения из app_config
    */
   async getAppConfig(key: string): Promise<string | null> {
-    const client = getClient();
+    const client = getServiceRoleClient();
     const { data } = await client
       .from('app_config')
       .select('value')

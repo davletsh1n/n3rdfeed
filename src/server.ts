@@ -2,8 +2,12 @@ import { serve } from '@hono/node-server';
 import { config } from 'dotenv';
 import app from './index';
 import { startWorker } from './worker.js';
+import { loadDynamicConfig } from './services/config.js';
 
 config();
+
+// Load dynamic config from DB
+loadDynamicConfig().catch(err => console.error('Failed to load dynamic config:', err));
 
 // Start background worker
 startWorker();
